@@ -6,7 +6,7 @@
 
 ## Phase 0: Project Setup
 
-- [ ] **TASK-001** — Install dependencies (`npm install`) and verify dev server runs
+- [x] **TASK-001** — Install dependencies (`npm install`) and verify dev server runs
   - Command: `npm install && npm run dev`
   - Acceptance: `http://localhost:4321` loads without errors
   - Size: XSmall
@@ -21,31 +21,31 @@
   - Acceptance: Google login button triggers OAuth flow
   - Size: XSmall (manual step by user)
 
-- [ ] **TASK-004** — Create Supabase client singleton
+- [x] **TASK-004** — Create Supabase client singleton
   - File: `src/lib/supabase.ts`
   - Exports: `supabase` client instance
   - Size: XSmall
   - Depends: TASK-002
 
-- [ ] **TASK-005** — Create DB schema migration (Supabase SQL editor)
+- [x] **TASK-005** — Create DB schema migration (Supabase SQL editor)
   - Tables: `profiles`, `holdings`, `watchlist`, `paper_trades`, `paper_balances`, `push_subscriptions`
   - File: `docs/schema.sql` (for reference)
   - Size: Small
   - Depends: TASK-002
 
-- [ ] **TASK-006** — Build Google sign-in page
+- [x] **TASK-006** — Build Google sign-in page
   - File: `src/pages/login.astro` + `src/components/LoginButton.tsx`
   - Acceptance: Click → Google OAuth → redirect to `/dashboard`
   - Size: Small
   - Depends: TASK-003, TASK-004
 
-- [ ] **TASK-007** — Auth callback route + session handling
+- [x] **TASK-007** — Auth callback route + session handling
   - File: `src/pages/auth/callback.astro`
   - Acceptance: After OAuth, user is authenticated and redirected to `/dashboard`
   - Size: Small
   - Depends: TASK-006
 
-- [ ] **TASK-008** — Protected route middleware
+- [x] **TASK-008** — Protected route middleware
   - File: `src/middleware.ts`
   - Acceptance: Unauthenticated users redirected to `/login` on protected pages
   - Size: Small
@@ -55,31 +55,31 @@
 
 ## Phase 1: AI Provider Abstraction
 
-- [ ] **TASK-009** — Define AI types and interface
+- [x] **TASK-009** — Define AI types and interface
   - File: `src/lib/ai/types.ts`
   - Exports: `StockAnalysisInput`, `StockAnalysisResult` types
   - Size: XSmall
 
-- [ ] **TASK-010** — Implement Gemini provider
+- [x] **TASK-010** — Implement Gemini provider
   - File: `src/lib/ai/gemini.ts`
   - Uses: `GEMINI_API_KEY` env var, Gemini 1.5 Flash model
   - Size: Small
   - Depends: TASK-009
 
-- [ ] **TASK-011** — Implement Groq provider
+- [x] **TASK-011** — Implement Groq provider
   - File: `src/lib/ai/groq.ts`
   - Uses: `GROQ_API_KEY` env var, llama-3.1-8b-instant model
   - Size: Small
   - Depends: TASK-009
 
-- [ ] **TASK-012** — Auto-switch provider logic + main analyzeStock function
+- [x] **TASK-012** — Auto-switch provider logic + main analyzeStock function
   - File: `src/lib/ai/index.ts`
   - Logic: if `GEMINI_API_KEY` set → Gemini, else if `GROQ_API_KEY` → Groq, else throw
   - Exports: `analyzeStock(data): Promise<StockAnalysisResult>`
   - Size: XSmall
   - Depends: TASK-010, TASK-011
 
-- [ ] **TASK-013** — Astro API endpoint wrapping AI call
+- [x] **TASK-013** — Astro API endpoint wrapping AI call
   - File: `src/pages/api/analyze.ts`
   - Accepts: POST `{ ticker, priceHistory, technicals, fundamentals, news }`
   - Returns: `{ verdict, rationale, confidence }`
@@ -90,48 +90,48 @@
 
 ## Phase 2: Market Data Layer
 
-- [ ] **TASK-014** — Yahoo Finance fetcher for PSE price history
+- [x] **TASK-014** — Yahoo Finance fetcher for PSE price history
   - File: `src/lib/market/yahoo.ts`
   - Function: `fetchPriceHistory(ticker: string, days: number): Promise<OHLCV[]>`
   - Note: Append `.PS` to ticker for Yahoo (e.g., `SM` → `SM.PS`)
   - Size: Small
 
-- [ ] **TASK-015** — Compute RSI (14-period) from price array
+- [x] **TASK-015** — Compute RSI (14-period) from price array
   - File: `src/lib/market/indicators.ts`
   - Function: `computeRSI(closes: number[], period?: number): number`
   - Size: Small
 
-- [ ] **TASK-016** — Compute MACD from price array
+- [x] **TASK-016** — Compute MACD from price array
   - File: `src/lib/market/indicators.ts`
   - Function: `computeMACD(closes: number[]): { macd, signal, histogram }`
   - Size: Small
 
-- [ ] **TASK-017** — Compute SMA (20, 50, 200-day) from price array
+- [x] **TASK-017** — Compute SMA (20, 50, 200-day) from price array
   - File: `src/lib/market/indicators.ts`
   - Function: `computeSMA(closes: number[], period: number): number`
   - Size: XSmall
 
-- [ ] **TASK-018** — PSE Edge fundamentals scraper
+- [x] **TASK-018** — PSE Edge fundamentals scraper
   - File: `src/lib/market/pseedge.ts`
   - Function: `fetchFundamentals(ticker: string): Promise<Fundamentals>`
   - Returns: `{ pe, eps, revenue, bookValue, dividendYield }`
   - Note: Scrape `edge.pse.com.ph` company profile page
   - Size: Medium
 
-- [ ] **TASK-019** — News headline fetcher for sentiment
+- [x] **TASK-019** — News headline fetcher for sentiment
   - File: `src/lib/market/news.ts`
   - Function: `fetchHeadlines(ticker: string): Promise<string[]>`
   - Source: Google News RSS or Philippine Star / BusinessWorld RSS
   - Size: Small
 
-- [ ] **TASK-020** — Combined stock data aggregator
+- [x] **TASK-020** — Combined stock data aggregator
   - File: `src/lib/market/index.ts`
   - Function: `getStockData(ticker: string): Promise<StockAnalysisInput>`
   - Calls: TASK-014 + TASK-015-017 + TASK-018 + TASK-019
   - Size: Small
   - Depends: TASK-014 through TASK-019
 
-- [ ] **TASK-021** — Astro API endpoint: GET stock data
+- [x] **TASK-021** — Astro API endpoint: GET stock data
   - File: `src/pages/api/stock/[ticker].ts`
   - Caches result for 15 minutes (Yahoo Finance delay)
   - Size: Small

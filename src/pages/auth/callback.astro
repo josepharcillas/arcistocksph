@@ -1,0 +1,22 @@
+---
+import '../../styles/global.css';
+---
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Signing in… — ArciStocks PH</title>
+  </head>
+  <body class="bg-slate-950 text-white min-h-screen flex items-center justify-center">
+    <p class="text-slate-400 animate-pulse">Signing you in…</p>
+    <script>
+      import { supabase } from '../../lib/supabase';
+
+      const { error } = await supabase.auth.exchangeCodeForSession(window.location.search.slice(1));
+      if (error) {
+        window.location.href = '/login?error=' + encodeURIComponent(error.message);
+      } else {
+        window.location.href = '/dashboard';
+      }
+    </script>
+  </body>
+</html>

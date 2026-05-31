@@ -1,0 +1,18 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import SignalsFeed from '../../components/signals/SignalsFeed';
+---
+<DashboardLayout title="Signals">
+  <div class="p-4 md:p-6">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold">AI Signals</h1>
+      <p class="text-slate-400 text-sm mt-0.5">Buy/Sell/Hold recommendations for your holdings</p>
+    </div>
+
+    <SignalsFeed client:load />
+
+    <p class="text-slate-600 text-xs mt-8 text-center">
+      AI signals are for educational purposes only. Always do your own research before investing.
+    </p>
+  </div>
+</DashboardLayout>

@@ -1,29 +1,56 @@
 # Current Task
 
-## TASK-001 — Install dependencies and verify dev server
+## Status: Phases 0–4 are coded. Manual Supabase setup pending.
 
-**Status:** TODO — start here
+---
 
-**What to do:**
-1. Run `npm install` in the `arcistocksph` directory
-2. Run `npm run dev`
-3. Open `http://localhost:4321` and verify the placeholder page loads
-4. Fix any errors that appear
+## ACTION REQUIRED — Manual steps by user (TASK-002 + TASK-003)
 
-**Acceptance criteria:**
-- Dev server runs without errors
-- `http://localhost:4321` shows the ArciStocks PH placeholder page
+Before the app works end-to-end, you must complete these two steps:
 
-**Files involved:**
-- `package.json` (already created)
-- `astro.config.mjs` (already created)
+### TASK-002 — Create Supabase project
+1. Go to `supabase.com` → New project
+2. Copy `Project URL` and `anon public` key
+3. Create `.env` in the project root:
+   ```
+   PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
+   PUBLIC_SUPABASE_ANON_KEY=eyJ...
+   GEMINI_API_KEY=your_gemini_key
+   ```
+4. In Supabase SQL editor, paste and run `docs/schema.sql`
 
-**Next task after this:** TASK-002 (Create Supabase project — manual step by user)
+### TASK-003 — Enable Google OAuth in Supabase
+1. Supabase dashboard → Authentication → Providers → Google → Enable
+2. Google Cloud Console → APIs & Services → Credentials → OAuth 2.0 Client ID
+3. Authorized redirect URI: `https://xxxx.supabase.co/auth/v1/callback`
+4. Paste Client ID + Secret into Supabase Google provider settings
+
+---
+
+## Next Coded Task: TASK-032 — PSEi 30 seed data + Screener page
+
+Files to create:
+- `src/data/psei30.ts` — 30 PSEi stocks array
+- `src/data/pse-stocks.json` — all ~300 PSE stocks
+- `src/pages/screener.astro`
+- `src/components/screener/ScreenerFilters.tsx`
+- `src/components/screener/ScreenerResults.tsx`
+
+---
+
+## Progress Summary
+
+| Phase | Done |
+|---|---|
+| 0 — Setup | 6/8 (TASK-002, 003 pending manual) |
+| 1 — AI Provider | 5/5 ✓ |
+| 2 — Market Data | 8/8 ✓ |
+| 3 — Portfolio | 6/6 ✓ |
+| 4 — AI Signals | 4/4 ✓ |
+| 5–11 | pending |
 
 ---
 
 ## How to Resume After Usage Reset
 
-Just say: **"continue"** or **"continue from CURRENT.md"**
-
-Claude will read `CLAUDE.md` and `CURRENT.md` and pick up exactly where we left off.
+Say: **"continue"** — Claude reads CLAUDE.md + CURRENT.md and picks up here.

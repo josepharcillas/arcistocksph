@@ -1,0 +1,21 @@
+---
+import '../styles/global.css';
+import Sidebar from '../components/layout/Sidebar';
+
+const { title = 'ArciStocks PH' } = Astro.props;
+const currentPath = new URL(Astro.request.url).pathname;
+---
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title} — ArciStocks PH</title>
+  </head>
+  <body class="bg-slate-950 text-white">
+    <Sidebar currentPath={currentPath} client:load />
+
+    <main class="md:ml-56 min-h-screen pb-20 md:pb-0">
+      <slot />
+    </main>
+  </body>
+</html>
