@@ -1,0 +1,18 @@
+---
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import Leaderboard from '../components/leaderboard/Leaderboard';
+---
+<DashboardLayout title="Leaderboard">
+  <div class="p-4 md:p-6 max-w-2xl">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold">🏆 Leaderboard</h1>
+      <p class="text-slate-400 text-sm mt-0.5">Top paper traders by return from ₱100,000</p>
+    </div>
+
+    <Leaderboard client:load />
+
+    <p class="text-slate-600 text-xs mt-8 text-center">
+      Public ranking of opted-in users. Paper trading only — not financial advice.
+    </p>
+  </div>
+</DashboardLayout>
