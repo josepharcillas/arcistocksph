@@ -259,7 +259,7 @@
 
 ## Phase 7: PWA + Push Notifications
 
-- [ ] **TASK-039** — Verify vite-plugin-pwa config and web manifest
+- [x] **TASK-039** *(manifest verified; generated missing icon-192/512 PNGs via scripts/generate-icons.mjs)*   — Verify vite-plugin-pwa config and web manifest
   - Check `astro.config.mjs` manifest section
   - Test: Chrome DevTools → Application → Manifest shows correctly
   - Size: XSmall
@@ -463,7 +463,7 @@
   - Fix: read server secrets via `process.env` at request time (node adapter), and ensure PM2/`ecosystem.config.cjs` loads them from a server-side `.env`. Verify with a prod smoke test.
   - Size: Small
 
-- [ ] **TASK-067** — Add `ecosystem.config.cjs` for PM2 (unblock deploy)
+- [x] **TASK-067** — Add `ecosystem.config.cjs` for PM2 *(DONE: dist/server/entry.mjs under PM2, --env-file=.env for runtime secrets. NOTE: full deploy still needs prod Supabase + server .env + CI secrets set.)*
   - File: `ecosystem.config.cjs` (repo root)
   - Bug: `deploy.yml` scp's and `pm2 start ecosystem.config.cjs`, but the file doesn't exist → deploy fails on a fresh server.
   - Fix: add PM2 config pointing at `dist/server/entry.mjs` with `HOST`/`PORT` and env file loading.
