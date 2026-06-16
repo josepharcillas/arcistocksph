@@ -425,7 +425,7 @@
 | 1 — AI Provider | TASK-009 to 013 | 5/5 done |
 | 2 — Market Data | TASK-014 to 021 | 7/8 done (018 scraper broken) |
 | 3 — Portfolio | TASK-022 to 027 | 3/6 done (024, 025 partial; 027 not built) |
-| 4 — AI Signals | TASK-028 to 031 | 2/4 done (029, 031 partial) |
+| 4 — AI Signals | TASK-028 to 031 | done (031 now wired to DB cache — TASK-069) |
 | 5 — Screener | TASK-032 to 035 | 0/4 done |
 | 6 — Watchlist | TASK-036 to 038 | 3/3 done ✓ |
 | 7 — PWA + Push | TASK-039 to 044 | 0/6 done (manifest configured) |
@@ -476,7 +476,7 @@
   - HoldingsList and SignalCard already link here; today it 404s. This is really TASK-027 — promoted because existing UI depends on it.
   - Size: Medium
 
-- [ ] **TASK-069** — Wire signal caching to the `signal_cache` table
+- [x] **TASK-069** — Wire signal caching to the `signal_cache` table *(DONE: /api/analyze reads/writes signal_cache (4h, shared across users via service role). Verified: 1.9s->117ms on cache hit.)*
   - Replace the in-memory Map in `api/analyze.ts` with read/write to `signal_cache` (4h TTL). Cuts AI calls across users/restarts and protects the Gemini free-tier quota.
   - Size: Small
 
