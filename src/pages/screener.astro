@@ -1,0 +1,18 @@
+---
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import Screener from '../components/screener/Screener';
+---
+<DashboardLayout title="Screener">
+  <div class="p-4 md:p-6">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold">Stock Screener</h1>
+      <p class="text-slate-400 text-sm mt-0.5">Browse all PSE-listed stocks with live prices</p>
+    </div>
+
+    <Screener client:load />
+
+    <p class="text-slate-600 text-xs mt-8 text-center">
+      Sector filter covers the PSEi 30. Prices are delayed/end-of-day. Not financial advice.
+    </p>
+  </div>
+</DashboardLayout>

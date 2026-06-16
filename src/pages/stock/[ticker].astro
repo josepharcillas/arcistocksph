@@ -1,0 +1,16 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import StockDetail from '../../components/StockDetail';
+
+const { ticker } = Astro.params;
+const t = (ticker ?? '').toUpperCase().replace('.PS', '');
+---
+<DashboardLayout title={t}>
+  <div class="p-4 md:p-6 max-w-3xl mx-auto">
+    <a href="/dashboard" class="text-slate-400 text-sm hover:text-white transition-colors">← Back to portfolio</a>
+    <StockDetail ticker={t} client:load />
+    <p class="text-slate-600 text-xs mt-8 text-center">
+      This is not financial advice. Prices are delayed/end-of-day. Always do your own research.
+    </p>
+  </div>
+</DashboardLayout>
