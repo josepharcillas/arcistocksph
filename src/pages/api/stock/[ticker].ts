@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import { getStockData } from '../../../lib/market';
 
 const cache = new Map<string, { data: unknown; expiresAt: number }>();
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 min — matches Yahoo Finance delay
+const CACHE_TTL_MS = 15 * 60 * 1000; // 15 min — PSE data is delayed/EOD anyway
 
 export const GET: APIRoute = async ({ params }) => {
   const ticker = params.ticker?.toUpperCase();

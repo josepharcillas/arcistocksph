@@ -17,7 +17,11 @@ export default function AddHoldingForm({ onAdded }: Props) {
     if (!ticker || !qty || !buyPrice) { setError('All fields are required.'); return; }
 
     setSaving(true);
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) { setError('You must be signed in to add a holding.'); setSaving(false); return; }
+
     const { error: err } = await supabase.from('holdings').insert({
+      user_id: user.id,
       ticker: ticker.toUpperCase().replace('.PS', ''),
       qty: parseFloat(qty),
       buy_price: parseFloat(buyPrice),

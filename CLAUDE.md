@@ -7,8 +7,8 @@ A Progressive Web App (PWA) for Filipino investors. It provides AI-powered buy/s
 - **Framework:** Astro 5 + React 19 + TypeScript (strict)
 - **Styling:** Tailwind CSS 4 — dark theme (slate-950 base, green/red accents)
 - **Auth + DB:** Supabase — Google OAuth, Postgres
-- **Market Data:** Yahoo Finance unofficial API (`.PS` suffix for PSE stocks, ~15min delay)
-- **Fundamentals:** PSE Edge scraper (P/E, EPS, revenue)
+- **Market Data:** phisix API (live PSE quotes, all ~385 stocks) + PSE Edge `DisclosureCht.ax` (historical daily OHLCV for indicators). **Yahoo Finance `.PS` was abandoned — it has no live PSE data (frozen ~2019).**
+- **Fundamentals:** PSE Edge scraper (resolve ticker → cmpyId → company page; P/E/EPS currently not exposed there — best-effort, returns null gracefully)
 - **News:** RSS/news headline fetcher for sentiment
 - **AI:** Provider abstraction — Gemini (primary) → Groq (fallback), auto-switched by env key
 - **Push Notifications:** Firebase Cloud Messaging (FCM) + Web Push API
@@ -33,8 +33,7 @@ analyzeStock(data: StockAnalysisInput): Promise<StockAnalysisResult>
 
 ## Conventions
 - All monetary values in PHP (Philippine Peso)
-- Stock tickers use `.PS` suffix for Yahoo Finance calls (e.g., `SM.PS`, `BDO.PS`)
-- PSE ticker without suffix for display (e.g., `SM`, `BDO`)
+- Use the bare PSE ticker everywhere (e.g., `SM`, `BDO`) — phisix and PSE Edge both key on it; no exchange suffix
 - Always show "This is not financial advice" disclaimer on signal pages
 - Bilingual output: English with Filipino-friendly tone (no jargon without explanation)
 - Component files: PascalCase (`StockCard.tsx`)

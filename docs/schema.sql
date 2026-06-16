@@ -16,11 +16,18 @@ alter table profiles enable row level security;
 create policy "Users can view own profile" on profiles for select using (auth.uid() = id);
 create policy "Users can update own profile" on profiles for update using (auth.uid() = id);
 
--- Auto-create profile on signup
-create or replace function handle_new_user()
-returns trigger as $$
+-- Auto-create profile on signup.
+-- NOTE: must schema-qualify `public.profiles` AND pin search_path — the GoTrue
+-- auth connection does not have `public` on its search_path, so an unqualified
+-- reference makes signup fail with "Database error creating new user".
+create or replace function public.handle_new_user()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
 begin
-  insert into profiles (id, display_name, avatar_url)
+  insert into public.profiles (id, display_name, avatar_url)
   values (
     new.id,
     new.raw_user_meta_data->>'full_name',
@@ -28,7 +35,7 @@ begin
   );
   return new;
 end;
-$$ language plpgsql security definer;
+$$;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute procedure handle_new_user();
@@ -112,3 +119,16 @@ create table signal_cache (
   computed_at timestamptz default now()
 );
 -- No RLS — signal cache is public read, server-only write
+
+-- ---------------------------------------------------------------------------
+-- Role grants. Hosted Supabase auto-grants new tables to anon/authenticated via
+-- default privileges, but a raw schema.sql does NOT — without these, PostgREST
+-- returns "permission denied for table ...". RLS policies above still restrict
+-- which ROWS each role can see; these grants only open the tables at all.
+-- ---------------------------------------------------------------------------
+grant usage on schema public to anon, authenticated, service_role;
+grant all on all tables in schema public to anon, authenticated, service_role;
+grant all on all sequences in schema public to anon, authenticated, service_role;
+grant all on all functions in schema public to anon, authenticated, service_role;
+alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
+alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;

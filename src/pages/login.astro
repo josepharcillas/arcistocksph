@@ -29,6 +29,30 @@ import '../styles/global.css';
           Continue with Google
         </button>
 
+        <div class="flex items-center gap-3 my-5">
+          <div class="h-px bg-slate-800 flex-1"></div>
+          <span class="text-slate-600 text-xs">or</span>
+          <div class="h-px bg-slate-800 flex-1"></div>
+        </div>
+
+        <form id="email-login" class="space-y-3">
+          <p id="email-error" class="text-red-400 text-xs hidden"></p>
+          <input
+            id="email" type="email" placeholder="Email" required
+            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"
+          />
+          <input
+            id="password" type="password" placeholder="Password" required
+            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-green-500"
+          />
+          <button
+            id="email-submit" type="submit"
+            class="w-full bg-green-500 hover:bg-green-400 text-slate-950 font-semibold py-2.5 rounded-xl transition-colors"
+          >
+            Sign in with email
+          </button>
+        </form>
+
         <p class="text-slate-500 text-xs text-center mt-6">
           By signing in, you agree that this tool is for educational purposes only
           and does not constitute financial advice.
@@ -38,11 +62,30 @@ import '../styles/global.css';
 
     <script>
       import { supabase } from '../lib/supabase';
+
       document.getElementById('google-login')?.addEventListener('click', async () => {
         await supabase.auth.signInWithOAuth({
           provider: 'google',
           options: { redirectTo: `${window.location.origin}/auth/callback` },
         });
+      });
+
+      const form = document.getElementById('email-login') as HTMLFormElement | null;
+      const errEl = document.getElementById('email-error');
+      const btn = document.getElementById('email-submit') as HTMLButtonElement | null;
+      form?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        errEl?.classList.add('hidden');
+        if (btn) { btn.disabled = true; btn.textContent = 'Signing in…'; }
+        const email = (document.getElementById('email') as HTMLInputElement).value;
+        const password = (document.getElementById('password') as HTMLInputElement).value;
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        if (error) {
+          if (errEl) { errEl.textContent = error.message; errEl.classList.remove('hidden'); }
+          if (btn) { btn.disabled = false; btn.textContent = 'Sign in with email'; }
+          return;
+        }
+        window.location.href = '/dashboard';
       });
     </script>
   </body>
