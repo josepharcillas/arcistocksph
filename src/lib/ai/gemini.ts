@@ -2,7 +2,7 @@ import type { StockAnalysisInput, StockAnalysisResult } from './types';
 import { buildPrompt, parseAIResponse } from './prompt';
 
 export async function analyzeWithGemini(data: StockAnalysisInput): Promise<StockAnalysisResult> {
-  const apiKey = import.meta.env.GEMINI_API_KEY;
+  const apiKey = import.meta.env.GEMINI_API_KEY ?? process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY not set');
 
   const response = await fetch(
