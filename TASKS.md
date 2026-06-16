@@ -228,7 +228,7 @@
   - Size: Medium
   - Depends: TASK-032, TASK-033
 
-- [ ] **TASK-035** — AI-ranked screener results
+- [x] **TASK-035** — AI-ranked screener results *(DONE: "AI-rank top 5" button -> analyzes top filtered stocks, ranks by verdict+confidence with rationale; reuses cached /api/analyze)*
   - After filtering, send top 20 results to AI for ranking + brief rationale per stock
   - Size: Medium
   - Depends: TASK-034, TASK-013
@@ -264,7 +264,7 @@
   - Test: Chrome DevTools → Application → Manifest shows correctly
   - Size: XSmall
 
-- [ ] **TASK-040** — PWA install prompt component
+- [x] **TASK-040** — PWA install prompt component *(DONE: InstallPrompt.tsx, beforeinstallprompt banner, dismissable)*
   - File: `src/components/pwa/InstallPrompt.tsx`
   - Shows "Add to Home Screen" banner on mobile
   - Size: Small
@@ -394,7 +394,7 @@
   - BLOCKERS: (1) workflow references `ecosystem.config.cjs` which does not exist in the repo → first deploy's `pm2 start` fails; (2) build step only passes `PUBLIC_SUPABASE_*` secrets — `GEMINI_API_KEY`/`GROQ_API_KEY` are absent at build, so AI may be disabled in prod (verify runtime env handling — see TASK-066)
   - Size: Small
 
-- [ ] **TASK-060** — SEO meta tags + Open Graph image
+- [x] **TASK-060** — SEO meta tags + Open Graph *(DONE: SEO.astro — title, description, OG, Twitter, theme-color, icons; wired into DashboardLayout)*
   - File: `src/components/SEO.astro`
   - OG image: dark card with ArciStocks PH logo
   - Size: Small
