@@ -399,11 +399,11 @@
   - OG image: dark card with ArciStocks PH logo
   - Size: Small
 
-- [ ] **TASK-061** — Rate limiting on API routes
+- [x] **TASK-061** — Rate limiting on API routes *(DONE: src/lib/rateLimit.ts in middleware — 60/min API, 10/min AI per IP; verified 429s)*
   - Prevent abuse of AI endpoint (max 10 req/min per user)
   - Size: Small
 
-- [ ] **TASK-062** — Final disclaimer page
+- [x] **TASK-062** — Final disclaimer page *(DONE: /disclaimer.astro, EN + Filipino)*
   - File: `src/pages/disclaimer.astro`
   - "Not financial advice" legal disclaimer in English and Filipino
   - Size: XSmall
@@ -517,7 +517,7 @@
   - Note correctness nits while here: MACD signal line is an EMA over only the last 9 MACD values (should run over the full series); RSI uses a simple average, not Wilder's smoothing; `computeSMA` returns the current price when there's < period of data (makes SMA50/200 misleading for new listings).
   - Size: Medium
 
-- [ ] **TASK-072** — Rate-limit + protect public API routes
+- [x] **TASK-072** — Rate-limit public API routes *(DONE via middleware — see TASK-061)*
   - `api/stock/[ticker].ts` is unauthenticated and hits Yahoo on every call — open to abuse. Add the rate limiting from TASK-061 here too, and decide whether it needs auth. (Folds in TASK-061.)
   - Size: Small
 

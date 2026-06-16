@@ -1,0 +1,50 @@
+---
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+---
+<DashboardLayout title="Disclaimer">
+  <div class="p-4 md:p-6 max-w-2xl mx-auto">
+    <a href="/dashboard" class="text-slate-400 text-sm hover:text-white transition-colors">← Back</a>
+    <h1 class="text-2xl font-bold mt-4 mb-6">Disclaimer</h1>
+
+    <div class="space-y-5 text-slate-300 text-sm leading-relaxed">
+      <section>
+        <h2 class="text-white font-semibold mb-1">Not financial advice</h2>
+        <p>
+          ArciStocks PH is an educational tool. The buy/sell/hold signals, AI
+          rationales, prices, and any other information here are <strong>not financial advice</strong>
+          and must not be treated as a recommendation to buy or sell any security.
+          Always do your own research and consult a licensed financial advisor before investing.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-white font-semibold mb-1">Hindi ito payo sa pananalapi</h2>
+        <p>
+          Ang ArciStocks PH ay isang kasangkapang pang-edukasyon. Ang mga signal na
+          buy/sell/hold, paliwanag ng AI, presyo, at iba pang impormasyon dito ay
+          <strong>hindi payo sa pananalapi</strong> at hindi dapat ituring na rekomendasyon
+          na bumili o magbenta ng anumang stock. Magsaliksik nang mabuti at kumonsulta
+          sa lisensyadong financial advisor bago mamuhunan.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-white font-semibold mb-1">Data accuracy</h2>
+        <p>
+          Prices are sourced from free, unofficial feeds (phisix and PSE Edge) and may
+          be delayed, end-of-day, or occasionally unavailable. We make no guarantee as to
+          accuracy, completeness, or timeliness. Paper trading is a simulation and does not
+          reflect real market execution, fees, or liquidity.
+        </p>
+      </section>
+
+      <section>
+        <h2 class="text-white font-semibold mb-1">No liability</h2>
+        <p>
+          You are solely responsible for your investment decisions. ArciStocks PH and its
+          authors accept no liability for any loss arising from use of this tool.
+        </p>
+      </section>
+    </div>
+  </div>
+</DashboardLayout>
