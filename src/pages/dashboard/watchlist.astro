@@ -1,0 +1,18 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import WatchlistManager from '../../components/watchlist/WatchlistManager';
+---
+<DashboardLayout title="Watchlist">
+  <div class="p-4 md:p-6 max-w-2xl">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold">Watchlist</h1>
+      <p class="text-slate-400 text-sm mt-0.5">Track stocks and set price alerts</p>
+    </div>
+
+    <WatchlistManager client:load />
+
+    <p class="text-slate-600 text-xs mt-8 text-center">
+      Alerts show in-app when price crosses your target. Not financial advice.
+    </p>
+  </div>
+</DashboardLayout>

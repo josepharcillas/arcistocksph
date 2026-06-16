@@ -237,19 +237,19 @@
 
 ## Phase 6: Watchlist
 
-- [ ] **TASK-036** — Watchlist CRUD (add/remove stocks to watch)
+- [x] **TASK-036** — Watchlist CRUD (add/remove stocks to watch) *(DONE 2026-06-15: `WatchlistManager.tsx`; RLS insert/read verified)*
   - File: `src/components/watchlist/WatchlistManager.tsx`
   - Supabase table: `watchlist`
   - Size: Small
   - Depends: TASK-005
 
-- [ ] **TASK-037** — Watchlist dashboard page
+- [x] **TASK-037** — Watchlist dashboard page *(DONE: `dashboard/watchlist.astro` — live price + day change per row)*
   - File: `src/pages/dashboard/watchlist.astro`
   - Shows current price, day change, AI signal for each watched stock
   - Size: Small
   - Depends: TASK-036
 
-- [ ] **TASK-038** — Price alert conditions per watchlist entry
+- [x] **TASK-038** — Price alert conditions per watchlist entry *(DONE: inline above/below ₱ inputs, in-app ⚠ triggered badge. Push delivery is Phase 7.)*
   - Fields: `alert_price_above`, `alert_price_below` (nullable)
   - UI: inline edit on watchlist row
   - Size: Small
@@ -427,7 +427,7 @@
 | 3 — Portfolio | TASK-022 to 027 | 3/6 done (024, 025 partial; 027 not built) |
 | 4 — AI Signals | TASK-028 to 031 | 2/4 done (029, 031 partial) |
 | 5 — Screener | TASK-032 to 035 | 0/4 done |
-| 6 — Watchlist | TASK-036 to 038 | 0/3 done |
+| 6 — Watchlist | TASK-036 to 038 | 3/3 done ✓ |
 | 7 — PWA + Push | TASK-039 to 044 | 0/6 done (manifest configured) |
 | 8 — Paper Trading | TASK-045 to 049 | 0/5 done |
 | 9 — Leaderboard | TASK-050 to 053 | 0/4 done |
