@@ -299,32 +299,32 @@
 
 ## Phase 8: Paper Trading
 
-- [ ] **TASK-045** — Paper trading account setup (₱100,000 virtual balance)
+- [x] **TASK-045** — Paper trading account setup (₱100,000 virtual balance)
   - On first login, insert `paper_balances` row with `balance = 100000`
   - Size: XSmall
   - Depends: TASK-005
 
-- [ ] **TASK-046** — Simulated buy order
+- [x] **TASK-046** — Simulated buy order
   - File: `src/components/paper/BuyOrderForm.tsx`
   - Deducts from `paper_balances`, inserts into `paper_trades`
   - Validates: sufficient balance, valid ticker
   - Size: Small
   - Depends: TASK-045
 
-- [ ] **TASK-047** — Simulated sell order
+- [x] **TASK-047** — Simulated sell order
   - File: `src/components/paper/SellOrderForm.tsx`
   - Adds to `paper_balances`, inserts into `paper_trades`
   - Validates: user holds enough qty
   - Size: Small
   - Depends: TASK-046
 
-- [ ] **TASK-048** — Paper portfolio performance tracker
+- [x] **TASK-048** — Paper portfolio performance tracker
   - File: `src/components/paper/PaperPortfolio.tsx`
   - Shows: virtual holdings, current value, total return vs ₱100k baseline
   - Size: Small
   - Depends: TASK-046, TASK-047
 
-- [ ] **TASK-049** — Paper trade history log
+- [x] **TASK-049** — Paper trade history log
   - File: `src/pages/dashboard/paper-trading.astro`
   - Table of all past paper trades with P&L per trade
   - Size: Small
@@ -429,7 +429,7 @@
 | 5 — Screener | TASK-032 to 035 | 0/4 done |
 | 6 — Watchlist | TASK-036 to 038 | 3/3 done ✓ |
 | 7 — PWA + Push | TASK-039 to 044 | 0/6 done (manifest configured) |
-| 8 — Paper Trading | TASK-045 to 049 | 0/5 done |
+| 8 — Paper Trading | TASK-045 to 049 | 5/5 done ✓ (PaperTrading.tsx — balance, buy/sell, positions, history; verified) |
 | 9 — Leaderboard | TASK-050 to 053 | 0/4 done |
 | 10 — UI Polish | TASK-054 to 058 | partial (Sidebar + Skeleton built ahead of phase) |
 | 11 — Launch | TASK-059 to 063 | 0/5 done (059 deploy partial/blocked) |

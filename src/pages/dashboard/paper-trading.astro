@@ -1,0 +1,18 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import PaperTrading from '../../components/paper/PaperTrading';
+---
+<DashboardLayout title="Paper Trading">
+  <div class="p-4 md:p-6 max-w-2xl">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold">Paper Trading</h1>
+      <p class="text-slate-400 text-sm mt-0.5">Practice with a virtual ₱100,000 — no real money</p>
+    </div>
+
+    <PaperTrading client:load />
+
+    <p class="text-slate-600 text-xs mt-8 text-center">
+      Simulated trades fill at the latest delayed price. For practice only — not financial advice.
+    </p>
+  </div>
+</DashboardLayout>
