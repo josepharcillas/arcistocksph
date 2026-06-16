@@ -1,0 +1,25 @@
+---
+interface Props {
+  title?: string;
+  description?: string;
+}
+const {
+  title = 'ArciStocks PH — AI-Powered PSE Stock Advisor',
+  description = 'AI-powered buy/sell/hold signals, portfolio tracking, paper trading, and a leaderboard for Philippine Stock Exchange (PSE) investors.',
+} = Astro.props;
+---
+<title>{title}</title>
+<meta name="description" content={description} />
+<meta name="theme-color" content="#0f172a" />
+<link rel="icon" type="image/png" href="/icon-192.png" />
+<link rel="apple-touch-icon" href="/icon-192.png" />
+<!-- Open Graph -->
+<meta property="og:title" content={title} />
+<meta property="og:description" content={description} />
+<meta property="og:type" content="website" />
+<meta property="og:image" content="/icon-512.png" />
+<meta property="og:site_name" content="ArciStocks PH" />
+<!-- Twitter -->
+<meta name="twitter:card" content="summary" />
+<meta name="twitter:title" content={title} />
+<meta name="twitter:description" content={description} />

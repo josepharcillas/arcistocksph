@@ -1,6 +1,8 @@
 ---
 import '../styles/global.css';
 import Sidebar from '../components/layout/Sidebar';
+import SEO from '../components/SEO.astro';
+import InstallPrompt from '../components/pwa/InstallPrompt';
 
 const { title = 'ArciStocks PH' } = Astro.props;
 const currentPath = new URL(Astro.request.url).pathname;
@@ -9,7 +11,7 @@ const currentPath = new URL(Astro.request.url).pathname;
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>{title} — ArciStocks PH</title>
+    <SEO title={`${title} — ArciStocks PH`} />
   </head>
   <body class="bg-slate-950 text-white">
     <Sidebar currentPath={currentPath} client:load />
@@ -17,5 +19,7 @@ const currentPath = new URL(Astro.request.url).pathname;
     <main class="md:ml-56 min-h-screen pb-20 md:pb-0">
       <slot />
     </main>
+
+    <InstallPrompt client:load />
   </body>
 </html>
