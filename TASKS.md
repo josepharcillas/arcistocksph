@@ -334,25 +334,25 @@
 
 ## Phase 9: Leaderboard
 
-- [ ] **TASK-050** — Opt-in to leaderboard (display name setting)
+- [x] **TASK-050** — Opt-in to leaderboard (display name setting)
   - Field: `profiles.leaderboard_opt_in` (boolean), `profiles.display_name`
   - Settings page toggle
   - Size: XSmall
   - Depends: TASK-005
 
-- [ ] **TASK-051** — Leaderboard computation (% return from ₱100k baseline)
+- [x] **TASK-051** — Leaderboard computation (% return from ₱100k baseline)
   - DB view or function: rank users by `(paper_balance / 100000 - 1) * 100`
   - Size: Small
   - Depends: TASK-048, TASK-050
 
-- [ ] **TASK-052** — Leaderboard page
+- [x] **TASK-052** — Leaderboard page
   - File: `src/pages/leaderboard.astro`
   - Public page (no login required to view)
   - Ranked list: rank, display name, % return, best trade
   - Size: Small
   - Depends: TASK-051
 
-- [ ] **TASK-053** — Leaderboard time filters (weekly / monthly / all-time)
+- [~] **TASK-053** *(deferred: needs daily balance snapshots; all-time ranking done)* — — Leaderboard time filters (weekly / monthly / all-time)
   - Filter computes return over the selected period
   - Size: Small
   - Depends: TASK-052
@@ -430,7 +430,7 @@
 | 6 — Watchlist | TASK-036 to 038 | 3/3 done ✓ |
 | 7 — PWA + Push | TASK-039 to 044 | 0/6 done (manifest configured) |
 | 8 — Paper Trading | TASK-045 to 049 | 5/5 done ✓ (PaperTrading.tsx — balance, buy/sell, positions, history; verified) |
-| 9 — Leaderboard | TASK-050 to 053 | 0/4 done |
+| 9 — Leaderboard | TASK-050 to 053 | 3/4 done (053 time-filters deferred) |
 | 10 — UI Polish | TASK-054 to 058 | partial (Sidebar + Skeleton built ahead of phase) |
 | 11 — Launch | TASK-059 to 063 | 0/5 done (059 deploy partial/blocked) |
 | **12 — Critical Fixes & Gaps** | **TASK-064 to 073** | **0/10 done — DO FIRST** |
