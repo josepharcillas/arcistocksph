@@ -114,10 +114,10 @@ export default function StockDetail({ ticker }: { ticker: string }) {
         <div>
           <h2 className="text-sm font-semibold text-slate-300 mb-2">Fundamentals</h2>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-            <Stat label="P/E" value={f.pe != null ? f.pe.toFixed(2) : 'N/A'} />
-            <Stat label="EPS" value={f.eps != null ? `₱${f.eps.toFixed(2)}` : 'N/A'} />
+            <Stat label="Market Cap" value={f.marketCap != null ? `₱${(f.marketCap / 1e9).toFixed(1)}B` : 'N/A'} />
+            <Stat label="Out. Shares" value={f.outstandingShares != null ? `${(f.outstandingShares / 1e6).toFixed(0)}M` : 'N/A'} />
+            <Stat label="P/E" value={f.pe != null ? f.pe.toFixed(2) : 'N/A'} hint={f.pe == null ? 'live only' : undefined} />
             <Stat label="Book Value" value={f.bookValue != null ? `₱${f.bookValue.toFixed(2)}` : 'N/A'} />
-            <Stat label="Div Yield" value={f.dividendYield != null ? `${f.dividendYield.toFixed(2)}%` : 'N/A'} />
           </div>
         </div>
       )}

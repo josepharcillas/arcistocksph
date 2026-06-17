@@ -92,29 +92,38 @@ export async function fetchPriceHistory(ticker: string, days = 300): Promise<OHL
     .sort((a, b) => a.date.localeCompare(b.date));
 }
 
+const EMPTY_FUNDAMENTALS: Fundamentals = {
+  pe: null, eps: null, revenue: null, bookValue: null, dividendYield: null, marketCap: null, outstandingShares: null,
+};
+
 export async function fetchFundamentals(ticker: string): Promise<Fundamentals> {
-  const empty: Fundamentals = { pe: null, eps: null, revenue: null, bookValue: null, dividendYield: null };
   try {
     const { cmpyId } = await resolveCompany(ticker);
     const res = await fetch(`${BASE}/companyPage/stockData.do?cmpy_id=${cmpyId}`, { headers: { 'User-Agent': UA } });
-    if (!res.ok) return empty;
+    if (!res.ok) return EMPTY_FUNDAMENTALS;
     const html = await res.text();
 
-    const extract = (label: string): number | null => {
-      const m = html.match(new RegExp(`${label}[^\\d\\-]*(-?[\\d,.]+)`, 'i'));
+    // Values sit in the <td> immediately after each <th>Label</th>. Market Cap,
+    // Outstanding Shares and Par Value are reliably populated; P/E and Book Value
+    // are only filled during live trading sessions (often blank → null).
+    const field = (label: string): number | null => {
+      const re = new RegExp(`<th>\\s*${label}\\s*</th>\\s*<td[^>]*>\\s*([\\d.,]+)`, 'i');
+      const m = html.match(re);
       if (!m) return null;
       const n = parseFloat(m[1].replace(/,/g, ''));
       return isNaN(n) ? null : n;
     };
 
     return {
-      pe: extract('P\\/E'),
-      eps: extract('EPS'),
-      revenue: extract('Revenue'),
-      bookValue: extract('Book Value'),
-      dividendYield: extract('Dividend Yield'),
+      pe: field('P\\/E Ratio'),
+      eps: null, // not exposed on PSE Edge stock page
+      revenue: null,
+      bookValue: field('Book Value'),
+      dividendYield: null,
+      marketCap: field('Market Capitalization'),
+      outstandingShares: field('Outstanding Shares'),
     };
   } catch {
-    return empty;
+    return EMPTY_FUNDAMENTALS;
   }
 }

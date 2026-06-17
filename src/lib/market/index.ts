@@ -45,7 +45,7 @@ export async function getStockData(ticker: string, companyName = ticker): Promis
     },
     fundamentals: fundR.status === 'fulfilled'
       ? fundR.value
-      : { pe: null, eps: null, revenue: null, bookValue: null, dividendYield: null },
+      : { pe: null, eps: null, revenue: null, bookValue: null, dividendYield: null, marketCap: null, outstandingShares: null },
     headlines: newsR.status === 'fulfilled' ? newsR.value : [],
   };
 }

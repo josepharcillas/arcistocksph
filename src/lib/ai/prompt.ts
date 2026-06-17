@@ -17,8 +17,8 @@ TECHNICALS:
 - 1-week change: ${t.priceChange1w >= 0 ? '+' : ''}${t.priceChange1w.toFixed(2)}%
 
 FUNDAMENTALS:
+- Market Cap: ${fundamentals.marketCap != null ? '₱' + (fundamentals.marketCap / 1e9).toFixed(2) + 'B' : 'N/A'}
 - P/E Ratio: ${fundamentals.pe ?? 'N/A'}
-- EPS: ${fundamentals.eps != null ? '₱' + fundamentals.eps.toFixed(2) : 'N/A'}
 - Book Value: ${fundamentals.bookValue != null ? '₱' + fundamentals.bookValue.toFixed(2) : 'N/A'}
 - Dividend Yield: ${fundamentals.dividendYield != null ? fundamentals.dividendYield.toFixed(2) + '%' : 'N/A'}
 
