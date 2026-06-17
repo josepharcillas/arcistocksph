@@ -23,10 +23,13 @@ export default function HoldingsList() {
   const [holdings, setHoldings] = useState<HoldingWithPrice[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [error, setError] = useState('');
 
   async function load() {
     setLoading(true);
-    const { data } = await supabase.from('holdings').select('*').order('created_at', { ascending: false });
+    setError('');
+    const { data, error: err } = await supabase.from('holdings').select('*').order('created_at', { ascending: false });
+    if (err) { setError('Could not load your holdings. Please refresh.'); setLoading(false); return; }
     if (!data) { setLoading(false); return; }
 
     // Fetch current prices for each holding
@@ -70,6 +73,9 @@ export default function HoldingsList() {
 
   return (
     <div>
+      {error && (
+        <div className="bg-red-400/10 border border-red-400/30 rounded-xl p-3 mb-4 text-red-300 text-sm">{error}</div>
+      )}
       <PortfolioSummary totalValue={totalValue} totalCost={totalCost} holdingsCount={holdings.length} />
 
       <div className="flex items-center justify-between mb-4">

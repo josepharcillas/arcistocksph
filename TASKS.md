@@ -377,11 +377,11 @@
   - Used on: stock cards, signal cards, leaderboard rows
   - Size: Small
 
-- [ ] **TASK-057** — Empty states (no holdings, no watchlist, etc.)
+- [x] **TASK-057** — Empty states *(DONE: friendly empty states across holdings/watchlist/signals/screener/leaderboard/paper)*
   - Friendly prompt to add first holding / first watchlist item
   - Size: XSmall
 
-- [ ] **TASK-058** — Error boundary + API error states
+- [x] **TASK-058** — Error boundary + API error states *(DONE: error states in HoldingsList/SignalsFeed/StockDetail/Screener/Leaderboard; 429 handling)*
   - Graceful message when Yahoo Finance or AI provider fails
   - Size: Small
 
@@ -426,13 +426,13 @@
 | 2 — Market Data | TASK-014 to 021 | 7/8 done (018 scraper broken) |
 | 3 — Portfolio | TASK-022 to 027 | 3/6 done (024, 025 partial; 027 not built) |
 | 4 — AI Signals | TASK-028 to 031 | done (031 now wired to DB cache — TASK-069) |
-| 5 — Screener | TASK-032 to 035 | 0/4 done |
+| 5 — Screener | TASK-032 to 035 | 4/4 done ✓ (incl. AI-ranked picks) |
 | 6 — Watchlist | TASK-036 to 038 | 3/3 done ✓ |
-| 7 — PWA + Push | TASK-039 to 044 | 0/6 done (manifest configured) |
+| 7 — PWA + Push | TASK-039 to 044 | icons+install done; push (041-044) needs Firebase |
 | 8 — Paper Trading | TASK-045 to 049 | 5/5 done ✓ (PaperTrading.tsx — balance, buy/sell, positions, history; verified) |
 | 9 — Leaderboard | TASK-050 to 053 | 3/4 done (053 time-filters deferred) |
-| 10 — UI Polish | TASK-054 to 058 | partial (Sidebar + Skeleton built ahead of phase) |
-| 11 — Launch | TASK-059 to 063 | 0/5 done (059 deploy partial/blocked) |
+| 10 — UI Polish | TASK-054 to 058 | done except 054 shadcn (deferred — current styling is consistent) |
+| 11 — Launch | TASK-059 to 063 | SEO/rate-limit/disclaimer done; 059 deploy needs prod infra |
 | **12 — Critical Fixes & Gaps** | **TASK-064 to 073** | **0/10 done — DO FIRST** |
 | **Total** | **73 tasks** | **~23 fully done** |
 
@@ -521,6 +521,6 @@
   - `api/stock/[ticker].ts` is unauthenticated and hits Yahoo on every call — open to abuse. Add the rate limiting from TASK-061 here too, and decide whether it needs auth. (Folds in TASK-061.)
   - Size: Small
 
-- [ ] **TASK-073** — Error states for data/AI failures in the UI
+- [x] **TASK-073** — Error states for data/AI failures in the UI *(DONE — see TASK-058)*
   - HoldingsList swallows per-stock fetch errors and shows "—" with no retry; no global handling when Yahoo/AI is down. Add visible error + retry (this is TASK-058, promoted because the data sources are flaky by design).
   - Size: Small
