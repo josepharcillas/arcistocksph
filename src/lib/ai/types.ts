@@ -24,6 +24,8 @@ export interface Fundamentals {
   revenue: number | null;
   bookValue: number | null;
   dividendYield: number | null;
+  marketCap: number | null;
+  outstandingShares: number | null;
 }
 
 export interface StockAnalysisInput {

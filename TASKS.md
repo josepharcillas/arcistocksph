@@ -480,7 +480,7 @@
   - Replace the in-memory Map in `api/analyze.ts` with read/write to `signal_cache` (4h TTL). Cuts AI calls across users/restarts and protects the Gemini free-tier quota.
   - Size: Small
 
-- [ ] **TASK-070** — Fix PSE Edge fundamentals scraper (ticker → cmpy_id)
+- [x] **TASK-070** — Fix PSE Edge fundamentals scraper *(DONE: resolves cmpyId, extracts real Market Cap + Outstanding Shares + Par from the company page th/td table. P/E & Book Value are blank on PSE Edge outside live sessions -> null by design.)*
   - File: `src/lib/market/pseedge.ts`
   - `cmpy_id=<ticker>` is wrong; PSE Edge needs a numeric company id. Resolve ticker→id first (PSE Edge has a company search endpoint), then scrape. Until then, fundamentals are always empty and the AI prompt shows all "N/A".
   - Size: Medium
