@@ -8,7 +8,9 @@
     "build": "astro build",
     "preview": "astro preview",
     "astro": "astro",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:ui": "node scripts/ui-smoke.mjs",
+    "test:login": "node scripts/e2e-login-ui.mjs"
   },
   "dependencies": {
     "@astrojs/node": "^9.0.0",
@@ -24,6 +26,7 @@
   "devDependencies": {
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "playwright": "^1.61.0",
     "typescript": "^5.0.0",
     "vite-plugin-pwa": "^0.21.0",
     "vitest": "^4.1.9"

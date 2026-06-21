@@ -12,7 +12,11 @@ export default defineConfig({
     plugins: [
       tailwindcss(),
       VitePWA({
-        registerType: 'autoUpdate',
+        // 'prompt' (not 'autoUpdate') so a new build surfaces a "Refresh" banner
+        // instead of silently waiting — prevents users being stuck on a stale
+        // cached bundle. We register the SW ourselves in PwaUpdater.astro.
+        registerType: 'prompt',
+        injectRegister: false,
         manifest: {
           name: 'ArciStocks PH',
           short_name: 'ArciStocks',

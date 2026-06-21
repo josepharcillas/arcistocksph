@@ -1,0 +1,53 @@
+name: CI
+
+# Runs on every push and PR. Unlike deploy.yml (which we skip via [skip ci]),
+# this gate catches regressions like the "submit just refreshes the page" bug:
+# unit tests, a production build, and a real-browser smoke test of /login.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # Dummy public env is enough for the smoke test — it never performs a real
+      # login, it only verifies pages load and the login JS handler is attached.
+      - name: Build
+        run: npm run build
+        env:
+          PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          PUBLIC_SUPABASE_ANON_KEY: ci-dummy-anon-key
+
+      - name: Start production server
+        run: |
+          HOST=127.0.0.1 PORT=4321 node ./dist/server/entry.mjs &
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:4321/login >/dev/null && break
+            sleep 1
+          done
+        env:
+          PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+          PUBLIC_SUPABASE_ANON_KEY: ci-dummy-anon-key
+
+      - name: UI smoke test
+        run: npm run test:ui
+        env:
+          BASE_URL: http://127.0.0.1:4321

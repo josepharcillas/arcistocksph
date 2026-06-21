@@ -1,16 +1,43 @@
 ---
 import '../styles/global.css';
+import PwaUpdater from '../components/pwa/PwaUpdater.astro';
 ---
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ArciStocks PH — AI-Powered PSE Stock Advisor</title>
+    <meta name="description" content="AI-powered buy/sell/hold signals for PSE-listed stocks, portfolio tracking, paper trading, and a leaderboard for Filipino investors." />
   </head>
-  <body class="bg-slate-950 text-white min-h-screen flex items-center justify-center">
-    <div class="text-center">
-      <h1 class="text-4xl font-bold text-green-400">ArciStocks PH</h1>
-      <p class="text-slate-400 mt-2">AI-powered Philippine stock advisor. Coming soon.</p>
+  <body class="bg-slate-950 text-white min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-lg text-center">
+      <h1 class="text-4xl md:text-5xl font-bold text-green-400">ArciStocks PH</h1>
+      <p class="text-slate-400 mt-3 text-lg">
+        AI-powered buy/sell/hold signals for PSE-listed stocks — plus portfolio
+        tracking, paper trading, and a leaderboard.
+      </p>
+
+      <div class="flex flex-col sm:flex-row gap-3 justify-center mt-8">
+        <a
+          href="/login"
+          class="bg-green-500 hover:bg-green-400 text-slate-950 font-semibold py-3 px-6 rounded-xl transition-colors"
+        >
+          Sign in
+        </a>
+        <a
+          href="/screener"
+          class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-white font-semibold py-3 px-6 rounded-xl transition-colors"
+        >
+          Browse the screener
+        </a>
+      </div>
+
+      <p class="text-slate-600 text-xs mt-10">
+        This tool is for educational purposes only and does not constitute
+        financial advice.
+      </p>
     </div>
+
+    <PwaUpdater />
   </body>
 </html>

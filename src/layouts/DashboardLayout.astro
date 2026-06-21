@@ -3,6 +3,7 @@ import '../styles/global.css';
 import Sidebar from '../components/layout/Sidebar';
 import SEO from '../components/SEO.astro';
 import InstallPrompt from '../components/pwa/InstallPrompt';
+import PwaUpdater from '../components/pwa/PwaUpdater.astro';
 
 const { title = 'ArciStocks PH' } = Astro.props;
 const currentPath = new URL(Astro.request.url).pathname;
@@ -21,5 +22,6 @@ const currentPath = new URL(Astro.request.url).pathname;
     </main>
 
     <InstallPrompt client:load />
+    <PwaUpdater />
   </body>
 </html>

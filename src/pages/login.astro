@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import PwaUpdater from '../components/pwa/PwaUpdater.astro';
 ---
 <html lang="en">
   <head>
@@ -88,5 +89,7 @@ import '../styles/global.css';
         window.location.href = '/dashboard';
       });
     </script>
+
+    <PwaUpdater />
   </body>
 </html>
