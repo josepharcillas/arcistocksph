@@ -21,7 +21,8 @@ paper trading · leaderboard · fundamentals (mkt cap/shares) · rate limiting �
 disclaimer · SEO · PWA icons + install prompt · error/empty states.
 
 ### What's LEFT — needs YOU (cannot be done autonomously)
-1. **Production deploy** — create a prod Supabase project, run `docs/schema.sql`,
+1. **Production deploy** — step-by-step guide in **`docs/DEPLOY.md`** (Vultr +
+   hosted Supabase): create a prod Supabase project, run `docs/schema.sql`,
    set GitHub secrets (`PUBLIC_SUPABASE_*`, `DEPLOY_HOST/USER/SSH_KEY`,
    `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`), put a `.env` on the server.
    Config is ready (`ecosystem.config.cjs`); CI has been skipped via `[skip ci]`.
