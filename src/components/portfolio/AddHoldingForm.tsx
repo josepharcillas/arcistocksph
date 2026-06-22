@@ -20,13 +20,27 @@ export default function AddHoldingForm({ onAdded }: Props) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) { setError('You must be signed in to add a holding.'); setSaving(false); return; }
 
-    const { error: err } = await supabase.from('holdings').insert({
-      user_id: user.id,
-      ticker: ticker.toUpperCase().replace('.PS', ''),
-      qty: parseFloat(qty),
-      buy_price: parseFloat(buyPrice),
-      buy_date: buyDate,
-    });
+    const sym = ticker.toUpperCase().replace('.PS', '');
+    const addQty = parseFloat(qty);
+    const addPrice = parseFloat(buyPrice);
+
+    // If this ticker is already held, average into one consolidated position
+    // (weighted average cost) rather than creating a duplicate row.
+    const { data: existing } = await supabase.from('holdings').select('id, qty, buy_price').eq('user_id', user.id).eq('ticker', sym);
+
+    let err;
+    if (existing && existing.length > 0) {
+      let totQty = addQty;
+      let totCost = addQty * addPrice;
+      for (const e of existing) { totQty += Number(e.qty); totCost += Number(e.qty) * Number(e.buy_price); }
+      const [first, ...rest] = existing;
+      ({ error: err } = await supabase.from('holdings').update({ qty: totQty, buy_price: totCost / totQty, buy_date: buyDate }).eq('id', first.id));
+      if (!err && rest.length) await supabase.from('holdings').delete().in('id', rest.map((r) => r.id));
+    } else {
+      ({ error: err } = await supabase.from('holdings').insert({
+        user_id: user.id, ticker: sym, qty: addQty, buy_price: addPrice, buy_date: buyDate,
+      }));
+    }
 
     setSaving(false);
     if (err) { setError(err.message); return; }

@@ -55,6 +55,16 @@ create table holdings (
 alter table holdings enable row level security;
 create policy "Users manage own holdings" on holdings using (auth.uid() = user_id);
 
+-- Real-portfolio cash balance (so the portfolio can show Total Account Equity =
+-- cash + holdings value, like a broker). Editable by the user.
+create table portfolio_cash (
+  user_id uuid references auth.users on delete cascade primary key,
+  cash numeric not null default 0,
+  updated_at timestamptz default now()
+);
+alter table portfolio_cash enable row level security;
+create policy "Users manage own portfolio cash" on portfolio_cash using (auth.uid() = user_id);
+
 -- Watchlist
 create table watchlist (
   id uuid default uuid_generate_v4() primary key,

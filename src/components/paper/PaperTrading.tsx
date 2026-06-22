@@ -27,6 +27,8 @@ export default function PaperTrading() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
+  const [editBal, setEditBal] = useState(false);
+  const [balDraft, setBalDraft] = useState('');
 
   async function load() {
     const { data: { user } } = await supabase.auth.getUser();
@@ -103,6 +105,16 @@ export default function PaperTrading() {
     load();
   }
 
+  async function setPaperBalance(next: number) {
+    if (!userId || isNaN(next) || next < 0) return;
+    await supabase.from('paper_balances').upsert(
+      { user_id: userId, balance: next, updated_at: new Date().toISOString() },
+      { onConflict: 'user_id' }
+    );
+    setBalance(next);
+    setEditBal(false);
+  }
+
   if (loading) return <div className="space-y-3">{[1, 2].map((i) => <SkeletonCard key={i} />)}</div>;
 
   return (
@@ -118,8 +130,28 @@ export default function PaperTrading() {
           <p className={`text-lg font-bold ${totalReturn >= 0 ? 'text-green-400' : 'text-red-400'}`}>{totalReturn >= 0 ? '+' : ''}{totalReturn.toFixed(2)}%</p>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
-          <p className="text-slate-500 text-xs">Cash</p>
-          <p className="text-white text-sm font-medium mt-1">₱{balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+          <div className="flex items-center justify-between">
+            <p className="text-slate-500 text-xs">Cash</p>
+            {!editBal && (
+              <button onClick={() => { setBalDraft(String(Math.round(balance))); setEditBal(true); }} className="text-slate-500 hover:text-green-400 text-[11px]">adjust</button>
+            )}
+          </div>
+          {editBal ? (
+            <div className="mt-1 space-y-1">
+              <div className="flex items-center gap-1">
+                <input
+                  type="number" min="0" value={balDraft} autoFocus
+                  onChange={(e) => setBalDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') setPaperBalance(parseFloat(balDraft)); if (e.key === 'Escape') setEditBal(false); }}
+                  className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-green-500"
+                />
+                <button onClick={() => setPaperBalance(parseFloat(balDraft))} className="text-green-400 text-xs px-1">✓</button>
+              </div>
+              <button onClick={() => setPaperBalance(START_BALANCE)} className="text-slate-500 hover:text-white text-[11px]">reset to ₱100k</button>
+            </div>
+          ) : (
+            <p className="text-white text-sm font-medium mt-1">₱{balance.toLocaleString(undefined, { maximumFractionDigits: 0 })}</p>
+          )}
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-lg p-3">
           <p className="text-slate-500 text-xs">Positions</p>
