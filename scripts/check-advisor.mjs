@@ -1,0 +1,21 @@
+import { chromium } from 'playwright';
+const BASE = process.env.BASE_URL || 'http://127.0.0.1:4360';
+const b = await chromium.launch(); const p = await b.newPage();
+const errs = [];
+p.on('pageerror', e => errs.push('PAGEERR: ' + e.message.split('\n')[0]));
+p.on('console', m => { if (m.type()==='error') errs.push('console: ' + m.text().split('\n')[0]); });
+await p.goto(`${BASE}/login`, { waitUntil: 'networkidle' });
+await p.fill('#email','demo@arcistocks.local'); await p.fill('#password','demo123456');
+await p.click('#email-submit'); await p.waitForURL('**/dashboard',{timeout:10000});
+await p.goto(`${BASE}/dashboard/advisor`, { waitUntil: 'networkidle' });
+// advisor fetches signals (AI) — give it time
+await p.waitForSelector('text=Recommended actions', { timeout: 30000 }).catch(()=>{});
+await p.waitForTimeout(2000);
+const body = await p.textContent('body');
+console.log('equity snapshot   :', body.includes('Account equity'));
+console.log('actions section   :', body.includes('Recommended actions'));
+console.log('positions section :', body.includes('Your positions'));
+console.log('has an action kind :', /EXIT|TRIM|BUY|HOLD CASH/.test(body));
+console.log('disclaimer        :', body.includes('not financial advice'));
+console.log('page errors       :', errs.length ? [...new Set(errs)] : '(none)');
+await b.close();

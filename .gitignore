@@ -3,3 +3,6 @@ node_modules/
 .env
 .env.local
 .astro/
+
+# Compound Engineering machine-local config
+.compound-engineering/*.local.yaml

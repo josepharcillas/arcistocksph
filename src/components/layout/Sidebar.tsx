@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 const links = [
   { href: '/dashboard', label: 'Portfolio', icon: '💼' },
+  { href: '/dashboard/advisor', label: 'Advisor', icon: '🧭' },
   { href: '/dashboard/signals', label: 'Signals', icon: '📡' },
   { href: '/screener', label: 'Screener', icon: '🔍' },
   { href: '/dashboard/watchlist', label: 'Watchlist', icon: '👁' },

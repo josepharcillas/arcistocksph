@@ -1,0 +1,14 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import Advisor from '../../components/advisor/Advisor';
+---
+<DashboardLayout title="Advisor">
+  <div class="p-4 md:p-6 max-w-2xl">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold">🧭 Advisor</h1>
+      <p class="text-slate-400 text-sm mt-0.5">What to buy, trim, or exit — and how much — based on your portfolio + cash</p>
+    </div>
+
+    <Advisor client:load />
+  </div>
+</DashboardLayout>
