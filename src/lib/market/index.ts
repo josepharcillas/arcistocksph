@@ -1,8 +1,9 @@
-import type { StockAnalysisInput } from '../ai/types';
+import type { StockAnalysisInput, Fundamentals } from '../ai/types';
 import { fetchPriceHistory, fetchFundamentals } from './pseedge';
 import { fetchQuote, fetchAllQuotes } from './phisix';
 import { computeTechnicals } from './indicators';
 import { fetchHeadlines } from './news';
+import { fetchFundamentalsApi } from './fundamentalsApi';
 
 export { fetchPriceHistory, fetchFundamentals } from './pseedge';
 export { fetchQuote, fetchAllQuotes } from './phisix';
@@ -10,10 +11,11 @@ export { computeTechnicals, computeRSI, computeMACD, computeSMA } from './indica
 export { fetchHeadlines } from './news';
 
 export async function getStockData(ticker: string, companyName = ticker): Promise<StockAnalysisInput> {
-  const [historyR, quoteR, fundR, newsR] = await Promise.allSettled([
+  const [historyR, quoteR, fundR, fundApiR, newsR] = await Promise.allSettled([
     fetchPriceHistory(ticker, 300), // PSE Edge: ~250 trading days, enough for SMA200
     fetchQuote(ticker), // phisix: live price/%change
-    fetchFundamentals(ticker),
+    fetchFundamentals(ticker), // PSE Edge: market cap + shares
+    fetchFundamentalsApi(ticker), // external API: P/E, EPS, dividend yield (key-gated, {} if unset)
     fetchHeadlines(ticker, companyName),
   ]);
 
@@ -43,9 +45,22 @@ export async function getStockData(ticker: string, companyName = ticker): Promis
       priceChange1d,
       priceChange1w: prev1w > 0 ? ((currentPrice - prev1w) / prev1w) * 100 : 0,
     },
-    fundamentals: fundR.status === 'fulfilled'
-      ? fundR.value
-      : { pe: null, eps: null, revenue: null, bookValue: null, dividendYield: null, marketCap: null, outstandingShares: null },
+    fundamentals: mergeFundamentals(
+      fundR.status === 'fulfilled' ? fundR.value : null,
+      fundApiR.status === 'fulfilled' ? fundApiR.value : null,
+    ),
     headlines: newsR.status === 'fulfilled' ? newsR.value : [],
   };
+}
+
+// PSE Edge gives market cap + shares; the external API gives P/E, EPS, dividend
+// yield. Merge them, letting non-null API values fill or override.
+function mergeFundamentals(base: Fundamentals | null, api: Partial<Fundamentals> | null): Fundamentals {
+  const merged: Fundamentals = base ?? {
+    pe: null, eps: null, revenue: null, bookValue: null, dividendYield: null, marketCap: null, outstandingShares: null,
+  };
+  if (api) for (const [k, v] of Object.entries(api)) {
+    if (v != null) (merged as any)[k] = v;
+  }
+  return merged;
 }
