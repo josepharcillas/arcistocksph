@@ -8,6 +8,8 @@ import { notifyHoldersOfSignal } from '../../../lib/push/send';
 // cron job / serverless trigger:
 //   POST /api/push/notify
 //   Authorization: Bearer <PUSH_NOTIFY_SECRET>
+//   Content-Type: application/json   (required — Astro's CSRF guard rejects
+//                                     server-to-server POSTs without it)
 //   { "ticker": "SM", "verdict": "SELL", "rationale": "..." }
 
 function env(key: string): string | undefined {

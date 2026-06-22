@@ -154,6 +154,26 @@ Then open `https://YOUR_DOMAIN/login` and sign in.
 
 ---
 
+## Scheduled signal refresh (push alerts)
+
+So a flip to SELL alerts holders even when nobody is viewing the stock, run the
+refresh endpoint on a schedule. It recomputes signals for every held ticker
+(respecting the 4h cache) and notifies on newly-SELL transitions.
+
+On the server, edit the `deploy` user's crontab (`crontab -e`):
+
+```cron
+# Every 30 min during PSE trading hours (01:30–07:30 UTC ≈ 09:30–15:30 PHT), Mon–Fri
+*/30 1-8 * * 1-5 curl -fsS -X POST \
+  -H "Authorization: Bearer YOUR_PUSH_NOTIFY_SECRET" \
+  -H "Content-Type: application/json" \
+  https://YOUR_DOMAIN/api/cron/refresh-signals
+```
+
+The `Content-Type: application/json` header is required — Astro's CSRF guard
+rejects server-to-server POSTs without it. The endpoint is also protected by the
+`PUSH_NOTIFY_SECRET` bearer token (set it in the server `.env`).
+
 ## Notes
 
 - **CI vs deploy:** `ci.yml` (unit tests + build + browser smoke test) runs on
