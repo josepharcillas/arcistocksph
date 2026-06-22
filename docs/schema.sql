@@ -107,6 +107,17 @@ create table push_subscriptions (
 alter table push_subscriptions enable row level security;
 create policy "Users manage own push subs" on push_subscriptions using (auth.uid() = user_id);
 
+-- Per-stock push opt-out. Absence of a row = opted in (default on). A row with
+-- enabled = false suppresses alerts for that ticker.
+create table push_preferences (
+  user_id uuid references auth.users on delete cascade not null,
+  ticker text not null,
+  enabled boolean not null default true,
+  primary key (user_id, ticker)
+);
+alter table push_preferences enable row level security;
+create policy "Users manage own push prefs" on push_preferences using (auth.uid() = user_id);
+
 -- Signal cache (avoid re-calling AI on every visit)
 create table signal_cache (
   ticker text primary key,

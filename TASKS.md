@@ -275,23 +275,25 @@
   - Add to `.env`: `PUBLIC_FCM_VAPID_KEY`, `FCM_SERVER_KEY`
   - Size: XSmall (manual)
 
-- [ ] **TASK-042** — Push subscription registration (client-side)
-  - File: `src/lib/push/subscribe.ts`
-  - Function: `subscribeToPush(): Promise<void>`
-  - Saves subscription to Supabase `push_subscriptions` table
+- [x] **TASK-042** — Push subscription registration (client-side)
+  - File: `src/lib/push/subscribe.ts` (Web Push/VAPID; saves to `push_subscriptions`)
+  - Functions: `subscribeToPush`, `unsubscribeFromPush`, `isPushSupported`, `getPermission`, `isSubscribed`
+  - Code complete — runs once `PUBLIC_FCM_VAPID_KEY` is set (TASK-041)
   - Size: Small
   - Depends: TASK-039, TASK-041
 
-- [ ] **TASK-043** — Push trigger serverless function (sell signal)
-  - File: `src/pages/api/push/notify.ts`
-  - Triggered when a SELL signal is generated for a user's holding
-  - Sends push via FCM to all user's subscriptions
+- [x] **TASK-043** — Push trigger serverless function (sell signal)
+  - Files: `src/pages/api/push/notify.ts` + `src/lib/push/send.ts`
+  - POST guarded by `PUSH_NOTIFY_SECRET`; `notifyHoldersOfSignal()` fans out via
+    `web-push` to all holders' subscriptions, respecting per-stock opt-out, prunes dead subs
+  - SW push/notificationclick handlers in `public/push-sw.js` (imported into Workbox SW)
+  - Code complete — runs once VAPID keys are set (TASK-041)
   - Size: Medium
   - Depends: TASK-042, TASK-029
 
-- [ ] **TASK-044** — Notification settings page
-  - File: `src/pages/dashboard/notifications.astro`
-  - Per-stock opt-in/out for push alerts
+- [x] **TASK-044** — Notification settings page
+  - Files: `src/pages/dashboard/notifications.astro` + `src/components/pwa/NotificationSettings.tsx`
+  - Master on/off + per-stock opt-in/out (`push_preferences` table, see schema.sql)
   - Size: Small
   - Depends: TASK-043
 

@@ -26,7 +26,12 @@ disclaimer · SEO · PWA icons + install prompt · error/empty states.
    set GitHub secrets (`PUBLIC_SUPABASE_*`, `DEPLOY_HOST/USER/SSH_KEY`,
    `SUPABASE_SERVICE_ROLE_KEY`, `GROQ_API_KEY`), put a `.env` on the server.
    Config is ready (`ecosystem.config.cjs`); CI has been skipped via `[skip ci]`.
-2. **Push notifications (TASK-041–044)** — needs a Firebase project + FCM/VAPID keys.
+2. **Push notifications** — code is DONE (TASK-042/043/044: client subscribe,
+   `web-push` server send + `/api/push/notify`, SW handlers, settings page,
+   `push_preferences` table). Only TASK-041 remains: generate VAPID keys
+   (`npx web-push generate-vapid-keys`) and set `PUBLIC_FCM_VAPID_KEY`,
+   `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`, `PUSH_NOTIFY_SECRET` in `.env`. Run the
+   new `push_preferences` table from `docs/schema.sql` on prod Supabase.
 
 ### Deferred (optional)
 - TASK-054 shadcn restyle (cosmetic; current styling is consistent).

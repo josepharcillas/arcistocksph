@@ -17,6 +17,11 @@ export default defineConfig({
         // cached bundle. We register the SW ourselves in PwaUpdater.astro.
         registerType: 'prompt',
         injectRegister: false,
+        // Pull our push/notificationclick handlers into the Workbox SW so push
+        // works alongside precaching (see public/push-sw.js).
+        workbox: {
+          importScripts: ['/push-sw.js'],
+        },
         manifest: {
           name: 'ArciStocks PH',
           short_name: 'ArciStocks',
