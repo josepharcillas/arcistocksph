@@ -7,9 +7,10 @@ describe('computeSMA', () => {
     expect(computeSMA([10, 20, 30, 40], 2)).toBe(35);
   });
 
-  it('returns the last close when there is less than `period` of data', () => {
-    // documented edge-case behaviour (makes SMA50/200 unreliable for young listings)
-    expect(computeSMA([7, 8], 50)).toBe(8);
+  it('averages the available data when there is less than `period`', () => {
+    // Better than returning the latest price for young listings (SMA50/200).
+    expect(computeSMA([7, 8], 50)).toBe(7.5);
+    expect(computeSMA([], 20)).toBe(0);
   });
 });
 
@@ -28,6 +29,19 @@ describe('computeRSI', () => {
     const rsi = computeRSI(closes);
     expect(rsi).toBeGreaterThan(0);
     expect(rsi).toBeLessThan(100);
+  });
+
+  it("matches Wilder's textbook value on the canonical series", () => {
+    // Wilder's "New Concepts in Technical Trading Systems" example data.
+    // First 14-period RSI ≈ 70.46.
+    const closes = [44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08, 45.89, 46.03, 45.61, 46.28, 46.28];
+    expect(computeRSI(closes)).toBeCloseTo(70.46, 1);
+  });
+
+  it("applies Wilder's smoothing as the series extends", () => {
+    // Adding the next close (46.00, a down move) smooths the RSI to ≈ 66.25.
+    const closes = [44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.10, 45.42, 45.84, 46.08, 45.89, 46.03, 45.61, 46.28, 46.28, 46.00];
+    expect(computeRSI(closes)).toBeCloseTo(66.25, 1);
   });
 });
 

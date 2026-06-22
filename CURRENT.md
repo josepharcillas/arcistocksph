@@ -12,7 +12,11 @@ local Supabase + free live data (phisix + PSE Edge) + Groq AI.
 4. Explore: Portfolio, Signals, Screener (+ AI-rank), Stock detail, Watchlist, Paper Trading, Leaderboard.
 
 ### Verified (repeatable)
-- `npm test` (13 unit) · `npm run build` · `scripts/e2e-{db,auth,signal}.mjs` all green.
+- `npm test` (15 unit) · `npm run build` · `scripts/e2e-{db,auth,signal}.mjs` all green.
+- `npm run test:ui` (Playwright smoke, CI-safe) · `scripts/smoke-tickers.mjs` (5 live PSE
+  tickers through the authed HTTP path: data + AI signal) · `scripts/check-notifications.mjs`.
+- Indicator math corrected (Wilder RSI, full-series MACD signal, SMA averages available data).
+- Push send path verified locally with VAPID keys (`/api/push/notify` runs; delivery needs a real browser).
 
 ### What's DONE
 Auth (cookie SSR) · holdings + RLS · live market data · indicators · AI signals

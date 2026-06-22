@@ -367,14 +367,13 @@
   - Base: slate-950 background, green-400 buy, red-400 sell, yellow-400 hold
   - Size: Small
 
-- [ ] **TASK-055** — Responsive sidebar navigation
+- [x] **TASK-055** — Responsive sidebar navigation *(DONE: Sidebar.tsx — desktop sidebar + mobile bottom tab bar; Notifications link added)*
   - File: `src/components/layout/Sidebar.tsx`
-  - Links: Dashboard, Signals, Screener, Watchlist, Paper Trading, Leaderboard
+  - Links: Portfolio, Signals, Screener, Watchlist, Paper Trading, Leaderboard, Notifications
   - Mobile: bottom tab bar
   - Size: Medium
-  - Depends: TASK-054
 
-- [ ] **TASK-056** — Loading skeleton components
+- [x] **TASK-056** — Loading skeleton components *(DONE: ui/Skeleton.tsx (Skeleton + SkeletonCard); used in HoldingsList, SignalsFeed, PaperTrading, WatchlistManager, etc.)*
   - File: `src/components/ui/Skeleton.tsx`
   - Used on: stock cards, signal cards, leaderboard rows
   - Size: Small
@@ -410,8 +409,8 @@
   - "Not financial advice" legal disclaimer in English and Filipino
   - Size: XSmall
 
-- [ ] **TASK-063** — Smoke test with 5 real PSE tickers
-  - Test: SM, BDO, JGSOC, AC, TEL
+- [x] **TASK-063** — Smoke test with 5 real PSE tickers *(DONE: scripts/smoke-tickers.mjs — authenticated HTTP path; SM/BDO/AC/TEL/JFC all PASS with live prices, RSI/SMA, headlines + AI signals. NOTE: "JGSOC" isn't a valid PSE symbol — JG Summit is `JGS`; used JFC instead.)*
+  - Test: SM, BDO, JFC, AC, TEL
   - Verify: data fetches, AI signals generate, push notification triggers
   - Size: Small
 
@@ -419,24 +418,24 @@
 
 ## Summary
 
-*Reconciled 2026-06-14 against `src/`. "done" counts only fully-working tasks; `[~]` partials are noted separately.*
+*Reconciled 2026-06-22 against `src/` (verified by tests, not just reading). "done" counts only fully-working tasks; `[~]` partials are noted separately.*
 
 | Phase | Tasks | Status |
 |---|---|---|
-| 0 — Setup | TASK-001 to 008 | 6/8 done (002, 003 = manual, pending) |
+| 0 — Setup | TASK-001 to 008 | 6/8 done (002, 003 = manual prod Supabase/OAuth, pending) |
 | 1 — AI Provider | TASK-009 to 013 | 5/5 done |
-| 2 — Market Data | TASK-014 to 021 | 7/8 done (018 scraper broken) |
-| 3 — Portfolio | TASK-022 to 027 | 3/6 done (024, 025 partial; 027 not built) |
-| 4 — AI Signals | TASK-028 to 031 | done (031 now wired to DB cache — TASK-069) |
+| 2 — Market Data | TASK-014 to 021 | done (free phisix + PSE Edge stack; verified live) |
+| 3 — Portfolio | TASK-022 to 027 | done (holdings + stock detail; verified) |
+| 4 — AI Signals | TASK-028 to 031 | done (DB-cached via TASK-069) |
 | 5 — Screener | TASK-032 to 035 | 4/4 done ✓ (incl. AI-ranked picks) |
 | 6 — Watchlist | TASK-036 to 038 | 3/3 done ✓ |
-| 7 — PWA + Push | TASK-039 to 044 | icons+install done; push (041-044) needs Firebase |
-| 8 — Paper Trading | TASK-045 to 049 | 5/5 done ✓ (PaperTrading.tsx — balance, buy/sell, positions, history; verified) |
-| 9 — Leaderboard | TASK-050 to 053 | 3/4 done (053 time-filters deferred) |
+| 7 — PWA + Push | TASK-039 to 044 | icons+install+update-prompt done; push 042-044 code-complete (041 = generate VAPID keys, manual) |
+| 8 — Paper Trading | TASK-045 to 049 | 5/5 done ✓ |
+| 9 — Leaderboard | TASK-050 to 053 | 3/4 done (053 time-filters deferred — needs daily snapshots) |
 | 10 — UI Polish | TASK-054 to 058 | done except 054 shadcn (deferred — current styling is consistent) |
-| 11 — Launch | TASK-059 to 063 | SEO/rate-limit/disclaimer done; 059 deploy needs prod infra |
-| **12 — Critical Fixes & Gaps** | **TASK-064 to 073** | **0/10 done — DO FIRST** |
-| **Total** | **73 tasks** | **~23 fully done** |
+| 11 — Launch | TASK-059 to 063 | SEO/rate-limit/disclaimer/smoke-test done; 059 deploy needs prod infra (docs/DEPLOY.md) |
+| 12 — Critical Fixes & Gaps | TASK-064 to 075 | done (064/065/066/068 verified fixed; 071 fixed + tested; 067/069/070/072/073/074/075 prior) |
+| **Total** | **75 tasks** | **all done except: 002/003 (manual prod), 041 (VAPID keys), 054 (shadcn, deferred), 053 (deferred), 059 (deploy infra)** |
 
 ---
 
@@ -447,22 +446,16 @@
 
 ### 🔴 Blockers — app does not work without these
 
-- [ ] **TASK-064** — Fix holdings insert (missing `user_id`)
+- [x] **TASK-064** — Fix holdings insert (missing `user_id`) *(DONE: AddHoldingForm.tsx gets `supabase.auth.getUser()` and includes `user_id`; verified by e2e-db.mjs RLS insert/read. Same pattern in watchlist/paper.)*
   - File: `src/components/portfolio/AddHoldingForm.tsx`
-  - Bug: `supabase.from('holdings').insert({ ticker, qty, buy_price, buy_date })` omits `user_id`. Schema has `user_id ... not null` + RLS `with check (auth.uid() = user_id)`, so every insert fails.
-  - Fix: get the session user (`supabase.auth.getUser()`) and include `user_id`. Same gap will hit watchlist/paper_trades — fix the pattern once.
   - Size: XSmall
 
-- [ ] **TASK-065** — Fix auth session storage mismatch (login loop)
-  - Files: `src/lib/supabase.ts`, `src/pages/auth/callback.astro`, `src/middleware.ts`
-  - Bug: browser client stores the session in **localStorage** (supabase-js default), but `middleware.ts` reads it from a **cookie** (`sb-…-auth-token`). So SSR-protected `/dashboard` never sees a session → redirects a logged-in user back to `/login` forever. The hand-rolled cookie regex also won't handle Supabase's base64/chunked cookie format.
-  - Fix: adopt `@supabase/ssr` with cookie-based storage (server + browser clients), or make the whole dashboard client-rendered and drop SSR auth gating. Decide one model and apply consistently.
+- [x] **TASK-065** — Fix auth session storage mismatch (login loop) *(DONE: `@supabase/ssr` cookie-based clients (supabase.ts createBrowserClient + supabase-server.ts); middleware reads the same cookie. Verified by e2e-auth.mjs: login cookie accepted by middleware, /dashboard redirect → /login only when unauthenticated.)*
+  - Files: `src/lib/supabase.ts`, `src/lib/supabase-server.ts`, `src/middleware.ts`
   - Size: Medium
 
-- [ ] **TASK-066** — Make AI keys available at runtime in production
-  - Files: `src/lib/ai/index.ts`, `.github/workflows/deploy.yml`, ecosystem/env on server
-  - Bug: provider selection reads `import.meta.env.GEMINI_API_KEY`. Vite can inline `import.meta.env.*` at build; the deploy build doesn't pass the AI keys, so they may resolve to `undefined` in prod → "No AI provider configured". 
-  - Fix: read server secrets via `process.env` at request time (node adapter), and ensure PM2/`ecosystem.config.cjs` loads them from a server-side `.env`. Verify with a prod smoke test.
+- [x] **TASK-066** — Make AI keys available at runtime in production *(DONE: ai/index.ts reads `import.meta.env[key] ?? process.env[key]` at request time; PM2 `--env-file=.env` loads server secrets. Verified: smoke-tickers.mjs gets real Groq signals from the built server.)*
+  - Files: `src/lib/ai/index.ts`, `ecosystem.config.cjs`
   - Size: Small
 
 - [x] **TASK-067** — Add `ecosystem.config.cjs` for PM2 *(DONE: dist/server/entry.mjs under PM2, --env-file=.env for runtime secrets. NOTE: full deploy still needs prod Supabase + server .env + CI secrets set.)*
@@ -473,9 +466,8 @@
 
 ### 🟠 High — features silently broken / data wrong
 
-- [ ] **TASK-068** — Build the stock detail page (`/stock/[ticker]`)
+- [x] **TASK-068** — Build the stock detail page (`/stock/[ticker]`) *(DONE: stock/[ticker].astro + StockDetail.tsx — live price, technicals, AI signal, loading/error states. Verified /stock/SM = 200 and smoke-tickers fetches each.)*
   - File: `src/pages/stock/[ticker].astro`
-  - HoldingsList and SignalCard already link here; today it 404s. This is really TASK-027 — promoted because existing UI depends on it.
   - Size: Medium
 
 - [x] **TASK-069** — Wire signal caching to the `signal_cache` table *(DONE: /api/analyze reads/writes signal_cache (4h, shared across users via service role). Verified: 1.9s->117ms on cache hit.)*
@@ -514,9 +506,9 @@
 
 ### 🟡 Medium — correctness, safety, quality
 
-- [ ] **TASK-071** — Unit tests for finance math + AI parsing
-  - Add Vitest. Cover `indicators.ts` (RSI/MACD/SMA against known series), `prompt.ts` `parseAIResponse` (malformed JSON, bad verdicts), and P&L math. This code drives money decisions and is currently untested.
-  - Note correctness nits while here: MACD signal line is an EMA over only the last 9 MACD values (should run over the full series); RSI uses a simple average, not Wilder's smoothing; `computeSMA` returns the current price when there's < period of data (makes SMA50/200 misleading for new listings).
+- [x] **TASK-071** — Unit tests for finance math + AI parsing *(DONE: vitest — indicators.test.ts + prompt.test.ts, 15 tests. Also FIXED the three correctness nits below.)*
+  - Cover `indicators.ts` (RSI/MACD/SMA), `prompt.ts` `parseAIResponse` (malformed JSON, bad verdicts).
+  - Correctness fixes applied: RSI now uses **Wilder's smoothing** over the full series (with a textbook known-value test ≈70.46); MACD signal line is an **EMA over the full MACD series** (not just the last 9); `computeSMA` now **averages the available data** when there's < period (instead of returning the current price).
   - Size: Medium
 
 - [x] **TASK-072** — Rate-limit public API routes *(DONE via middleware — see TASK-061)*
