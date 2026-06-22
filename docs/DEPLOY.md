@@ -188,6 +188,20 @@ market close:
 (The week/month filters fall back to the ₱100k baseline until snapshots accrue,
 so returns become meaningful after a few days of snapshots.)
 
+To push each user the advisor's headline action when it changes, run the
+advisor-alerts cron after the signal refresh:
+
+```cron
+# 09:15 UTC ≈ 17:15 PHT, weekdays (after signal refresh warms the cache)
+15 9 * * 1-5 curl -fsS -X POST \
+  -H "Authorization: Bearer YOUR_PUSH_NOTIFY_SECRET" \
+  -H "Content-Type: application/json" \
+  https://YOUR_DOMAIN/api/cron/advisor-alerts
+```
+
+(Requires VAPID keys configured. Dedups on the headline-action signature, so it
+only notifies on a change.)
+
 ## Notes
 
 - **CI vs deploy:** `ci.yml` (unit tests + build + browser smoke test) runs on

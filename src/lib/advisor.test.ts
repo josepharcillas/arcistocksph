@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { computeAdvice, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition } from './advisor';
+import { computeAdvice, headlineSignature, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition } from './advisor';
+
+const RISK = { ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk' as const, riskPerTradePct: 2 };
 
 const pos = (o: Partial<AdvisorPosition> & { ticker: string }): AdvisorPosition => ({
   shares: 100, avgCost: 10, price: 10, verdict: null, confidence: null, ...o,
@@ -80,5 +82,65 @@ describe('computeAdvice', () => {
     const advice = computeAdvice([pos({ ticker: 'A', shares: 100, avgCost: 10, price: 10 })], 0, { ...DEFAULT_ADVISOR_CONFIG, maxWeightPct: 50 });
     // 100% weight, cap 50 → should trim
     expect(advice.actions.some((a) => a.kind === 'TRIM')).toBe(true);
+  });
+});
+
+describe('risk-based sizing (U1)', () => {
+  it('sizes a buy by equity-at-risk to the stop-loss', () => {
+    // equity = 10000 cash; risk 2% = ₱200; stop ₱1 below ₱10 → 200 shares
+    const advice = computeAdvice(
+      [pos({ ticker: 'GOOD', shares: 0, avgCost: 0, price: 10, stopLoss: 9, verdict: 'BUY', confidence: 'HIGH' })],
+      10000, RISK
+    );
+    const buy = advice.actions.find((a) => a.kind === 'BUY');
+    expect(buy?.shares).toBe(200);
+  });
+
+  it('falls back to cap/cash sizing when no usable stop-loss', () => {
+    const advice = computeAdvice(
+      [pos({ ticker: 'GOOD', shares: 0, avgCost: 0, price: 10, stopLoss: null, verdict: 'BUY', confidence: 'HIGH' })],
+      1000, RISK
+    );
+    const buy = advice.actions.find((a) => a.kind === 'BUY');
+    // cap room = 30% of 1000 = 300 → 30 shares; cash allows 100; cap binds
+    expect(buy?.shares).toBe(30);
+  });
+
+  it('never lets risk sizing exceed the cap', () => {
+    // huge risk budget but cap still binds
+    const advice = computeAdvice(
+      [pos({ ticker: 'GOOD', shares: 0, avgCost: 0, price: 10, stopLoss: 9.99, verdict: 'BUY', confidence: 'HIGH' })],
+      1000, { ...RISK, riskPerTradePct: 90 }
+    );
+    const buy = advice.actions.find((a) => a.kind === 'BUY');
+    expect(buy!.shares!).toBeLessThanOrEqual(30); // 30% of ₱1000 / ₱10
+  });
+});
+
+describe('watchlist candidates (U2)', () => {
+  it('treats a zero-share watchlist BUY as a buy candidate and marks it not-held', () => {
+    const advice = computeAdvice(
+      [pos({ ticker: 'WL', shares: 0, avgCost: 0, price: 10, verdict: 'BUY', confidence: 'HIGH' })],
+      1000
+    );
+    expect(advice.actions.some((a) => a.kind === 'BUY' && a.ticker === 'WL')).toBe(true);
+    expect(advice.positions.find((p) => p.ticker === 'WL')?.isHolding).toBe(false);
+  });
+
+  it('marks held positions as holdings', () => {
+    const advice = computeAdvice([pos({ ticker: 'H', shares: 10, avgCost: 10, price: 10 })], 0);
+    expect(advice.positions.find((p) => p.ticker === 'H')?.isHolding).toBe(true);
+  });
+});
+
+describe('headlineSignature (U3)', () => {
+  it('returns null when the only advice is to hold cash', () => {
+    const advice = computeAdvice([pos({ ticker: 'X', verdict: 'HOLD' })], 5000);
+    expect(headlineSignature(advice)).toBeNull();
+  });
+
+  it('returns a stable signature for the top actionable recommendation', () => {
+    const advice = computeAdvice([pos({ ticker: 'DEAD', shares: 100, avgCost: 100, price: 10, verdict: 'SELL', confidence: 'LOW' })], 0);
+    expect(headlineSignature(advice)).toBe('EXIT:DEAD:100');
   });
 });

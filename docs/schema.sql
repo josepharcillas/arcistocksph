@@ -139,6 +139,16 @@ create table push_preferences (
 alter table push_preferences enable row level security;
 create policy "Users manage own push prefs" on push_preferences using (auth.uid() = user_id);
 
+-- Dedup state for advisor push alerts: the last headline-action signature pushed
+-- to each user, so the advisor-alerts cron only notifies on a *change*.
+create table advisor_alert_state (
+  user_id uuid references auth.users on delete cascade primary key,
+  signature text,
+  updated_at timestamptz default now()
+);
+alter table advisor_alert_state enable row level security;
+create policy "Users read own advisor alert state" on advisor_alert_state for select using (auth.uid() = user_id);
+
 -- Signal cache (avoid re-calling AI on every visit)
 create table signal_cache (
   ticker text primary key,

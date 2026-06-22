@@ -22,9 +22,10 @@ export default function Advisor() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setError('Sign in to see your advisor.'); setLoading(false); return; }
 
-      const [{ data: holdings }, { data: cashRow }, quoteRes] = await Promise.all([
+      const [{ data: holdings }, { data: cashRow }, { data: watch }, quoteRes] = await Promise.all([
         supabase.from('holdings').select('ticker, qty, buy_price'),
         supabase.from('portfolio_cash').select('cash').eq('user_id', user.id).maybeSingle(),
+        supabase.from('watchlist').select('ticker'),
         fetch('/api/stocks').then((r) => r.json()).catch(() => []),
       ]);
 
@@ -34,27 +35,33 @@ export default function Advisor() {
       const priceMap: Record<string, number> = {};
       if (Array.isArray(quoteRes)) for (const q of quoteRes) priceMap[q.symbol] = q.price;
 
-      // Per-holding signal (cached server-side; degrade gracefully on failure/limit).
       const hs = (holdings ?? []) as Holding[];
-      const positions: AdvisorPosition[] = await Promise.all(hs.map(async (h) => {
-        let verdict = null, confidence = null;
+      const held = new Set(hs.map((h) => h.ticker));
+      // Watchlist tickers not already held become zero-share buy candidates (U2).
+      const watchTickers = [...new Set(((watch ?? []) as { ticker: string }[]).map((w) => w.ticker))].filter((t) => !held.has(t));
+
+      // Fetch the signal (verdict + confidence + stop-loss) for each ticker; cached
+      // server-side, and degrades gracefully on failure/rate-limit.
+      const signalFor = async (ticker: string) => {
         try {
           const sig = await fetch('/api/analyze', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ticker: h.ticker }),
+            body: JSON.stringify({ ticker }),
           }).then((r) => (r.ok ? r.json() : null));
-          if (sig && !sig.error) { verdict = sig.verdict; confidence = sig.confidence; }
-        } catch { /* leave null */ }
-        return {
-          ticker: h.ticker,
-          shares: Number(h.qty),
-          avgCost: Number(h.buy_price),
-          price: priceMap[h.ticker] ?? Number(h.buy_price),
-          verdict, confidence,
-        };
-      }));
+          if (sig && !sig.error) return { verdict: sig.verdict, confidence: sig.confidence, stopLoss: sig.stopLoss ?? null };
+        } catch { /* fall through */ }
+        return { verdict: null, confidence: null, stopLoss: null };
+      };
 
-      setAdvice(computeAdvice(positions, cashVal, DEFAULT_ADVISOR_CONFIG));
+      const heldPositions: AdvisorPosition[] = await Promise.all(hs.map(async (h) => ({
+        ticker: h.ticker, shares: Number(h.qty), avgCost: Number(h.buy_price),
+        price: priceMap[h.ticker] ?? Number(h.buy_price), ...(await signalFor(h.ticker)),
+      })));
+      const watchPositions: AdvisorPosition[] = await Promise.all(watchTickers.map(async (t) => ({
+        ticker: t, shares: 0, avgCost: 0, price: priceMap[t] ?? 0, ...(await signalFor(t)),
+      }))).then((ps) => ps.filter((p) => p.price > 0)); // skip unknown-price candidates
+
+      setAdvice(computeAdvice([...heldPositions, ...watchPositions], cashVal, { ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk' }));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not build your advice.');
     } finally {
@@ -122,11 +129,12 @@ export default function Advisor() {
         </div>
       </div>
 
-      {/* Current positions */}
+      {/* Current positions (held only; watchlist candidates appear as BUY actions above) */}
+      {advice.positions.some((p) => p.isHolding) && (
       <div>
         <h2 className="text-sm font-semibold text-slate-300 mb-2">Your positions</h2>
         <div className="space-y-1.5">
-          {advice.positions.map((p) => (
+          {advice.positions.filter((p) => p.isHolding).map((p) => (
             <div key={p.ticker} className="bg-slate-900 border border-slate-800 rounded-lg px-4 py-2.5 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <a href={`/stock/${p.ticker}`} className="font-bold text-white hover:text-green-400">{p.ticker}</a>
@@ -142,6 +150,7 @@ export default function Advisor() {
           ))}
         </div>
       </div>
+      )}
 
       <p className="text-slate-600 text-xs text-center">
         Risk-managed guidance from your holdings, cash, and AI signals — not a prediction and not financial advice.

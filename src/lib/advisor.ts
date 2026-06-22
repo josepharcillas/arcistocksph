@@ -9,19 +9,24 @@ export type Confidence = 'HIGH' | 'MEDIUM' | 'LOW';
 
 export interface AdvisorPosition {
   ticker: string;
-  shares: number;
+  shares: number;       // 0 for a watchlist candidate not yet held
   avgCost: number;
   price: number;
   verdict: Verdict | null;
   confidence: Confidence | null;
+  stopLoss?: number | null; // from the signal; enables risk-based sizing
 }
 
 export interface AdvisorConfig {
-  maxWeightPct: number; // concentration cap, % of equity
-  deepLossPct: number;  // P/L threshold (negative) at which a SELL signal triggers EXIT
+  maxWeightPct: number;   // concentration cap, % of equity
+  deepLossPct: number;    // P/L threshold (negative) at which a SELL triggers EXIT
+  sizing: 'cap' | 'risk'; // how BUY size is computed
+  riskPerTradePct: number; // % of equity risked to the stop-loss (risk mode)
 }
 
-export const DEFAULT_ADVISOR_CONFIG: AdvisorConfig = { maxWeightPct: 30, deepLossPct: -40 };
+export const DEFAULT_ADVISOR_CONFIG: AdvisorConfig = {
+  maxWeightPct: 30, deepLossPct: -40, sizing: 'cap', riskPerTradePct: 2,
+};
 
 export type ActionKind = 'EXIT' | 'TRIM' | 'BUY' | 'HOLD_CASH';
 
@@ -39,6 +44,7 @@ export interface PositionView {
   weightPct: number;
   pnlPct: number;
   verdict: Verdict | null;
+  isHolding: boolean;
 }
 
 export interface Advice {
@@ -64,6 +70,7 @@ export function computeAdvice(
     const pnlPct = p.avgCost > 0 ? ((p.price - p.avgCost) / p.avgCost) * 100 : 0;
     return { ...p, value, pnlPct };
   });
+  // Equity counts only held value (watchlist candidates have shares 0 → value 0).
   const holdingsValue = valued.reduce((s, p) => s + p.value, 0);
   const equity = cash + holdingsValue;
   const withWeight = valued.map((p) => ({ ...p, weightPct: equity > 0 ? (p.value / equity) * 100 : 0 }));
@@ -74,6 +81,7 @@ export function computeAdvice(
 
   // --- Sell / trim pass: cut dead losses and over-concentration, freeing cash ---
   for (const p of withWeight) {
+    if (p.shares <= 0) continue; // can't sell what you don't hold
     if (p.verdict === 'SELL' && p.pnlPct <= config.deepLossPct) {
       actions.push({
         kind: 'EXIT', ticker: p.ticker, shares: p.shares, pesos: p.value,
@@ -97,19 +105,30 @@ export function computeAdvice(
 
   // --- Buy pass: deploy available + freed cash into the best under-cap BUY ---
   let available = cash + freed;
+  const riskBudget = (config.riskPerTradePct / 100) * equity;
   const candidates = withWeight
     .filter((p) => p.verdict === 'BUY' && p.weightPct < config.maxWeightPct && !exited.has(p.ticker))
     .sort((a, b) => confRank(b.confidence) - confRank(a.confidence) || a.weightPct - b.weightPct);
 
   for (const p of candidates) {
     if (available < p.price) continue;
-    const room = Math.max(0, (config.maxWeightPct / 100) * equity - p.value);
-    const shares = Math.floor(Math.min(available, room) / p.price);
+    const capRoom = Math.max(0, (config.maxWeightPct / 100) * equity - p.value);
+    const capShares = Math.floor(capRoom / p.price);
+    const cashShares = Math.floor(available / p.price);
+
+    // Risk-based sizing when a usable stop-loss exists; else cap/cash bound only.
+    const usableStop = config.sizing === 'risk' && p.stopLoss != null && p.stopLoss > 0 && p.stopLoss < p.price;
+    const riskShares = usableStop ? Math.floor(riskBudget / (p.price - p.stopLoss!)) : Infinity;
+
+    const shares = Math.min(capShares, cashShares, riskShares);
     if (shares >= 1) {
       const cost = shares * p.price;
+      const basis = usableStop
+        ? `risk ${config.riskPerTradePct}% of equity to a ₱${p.stopLoss!.toFixed(2)} stop`
+        : `under the ${config.maxWeightPct}% cap`;
       actions.push({
         kind: 'BUY', ticker: p.ticker, shares, pesos: cost,
-        reason: `${p.verdict}/${p.confidence ?? '—'} signal at ${p.weightPct.toFixed(0)}% weight (under ${config.maxWeightPct}% cap) — add ${shares} share(s) for ₱${peso(cost)}.`,
+        reason: `${p.verdict}/${p.confidence ?? '—'} signal — add ${shares} share(s) for ₱${peso(cost)} (${basis}).`,
       });
       available -= cost;
     }
@@ -119,7 +138,7 @@ export function computeAdvice(
     actions.push({
       kind: 'HOLD_CASH', pesos: available,
       reason: candidates.length === 0
-        ? `No holding has a BUY signal under the ${config.maxWeightPct}% cap — hold your ₱${peso(available)} cash.`
+        ? `No stock has a BUY signal under the ${config.maxWeightPct}% cap — hold your ₱${peso(available)} cash.`
         : `Not enough cash to add a meaningful position — hold ₱${peso(available)}.`,
     });
   }
@@ -128,7 +147,18 @@ export function computeAdvice(
     equity,
     cash,
     holdingsValue,
-    positions: withWeight.map((p) => ({ ticker: p.ticker, value: p.value, weightPct: p.weightPct, pnlPct: p.pnlPct, verdict: p.verdict })),
+    positions: withWeight.map((p) => ({
+      ticker: p.ticker, value: p.value, weightPct: p.weightPct, pnlPct: p.pnlPct,
+      verdict: p.verdict, isHolding: p.shares > 0,
+    })),
     actions,
   };
+}
+
+// Headline action = the first real (non-HOLD_CASH) recommendation, used for alert
+// dedup. Returns a stable signature string, or null when the only advice is to hold.
+export function headlineSignature(advice: Advice): string | null {
+  const top = advice.actions.find((a) => a.kind !== 'HOLD_CASH');
+  if (!top) return null;
+  return `${top.kind}:${top.ticker}:${top.shares ?? 0}`;
 }
