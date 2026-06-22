@@ -174,6 +174,20 @@ The `Content-Type: application/json` header is required — Astro's CSRF guard
 rejects server-to-server POSTs without it. The endpoint is also protected by the
 `PUSH_NOTIFY_SECRET` bearer token (set it in the server `.env`).
 
+For the leaderboard's 7-day / 30-day returns, also snapshot balances daily after
+market close:
+
+```cron
+# 09:00 UTC ≈ 17:00 PHT, weekdays
+0 9 * * 1-5 curl -fsS -X POST \
+  -H "Authorization: Bearer YOUR_PUSH_NOTIFY_SECRET" \
+  -H "Content-Type: application/json" \
+  https://YOUR_DOMAIN/api/cron/snapshot-balances
+```
+
+(The week/month filters fall back to the ₱100k baseline until snapshots accrue,
+so returns become meaningful after a few days of snapshots.)
+
 ## Notes
 
 - **CI vs deploy:** `ci.yml` (unit tests + build + browser smoke test) runs on

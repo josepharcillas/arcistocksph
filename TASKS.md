@@ -354,8 +354,8 @@
   - Size: Small
   - Depends: TASK-051
 
-- [~] **TASK-053** *(deferred: needs daily balance snapshots; all-time ranking done)* — — Leaderboard time filters (weekly / monthly / all-time)
-  - Filter computes return over the selected period
+- [x] **TASK-053** — Leaderboard time filters (weekly / monthly / all-time) *(DONE: All-time / 30-day / 7-day toggle. `balance_snapshots` table + `/api/cron/snapshot-balances` daily cron record totals; week/month return = total vs earliest snapshot in the window (falls back to ₱100k until snapshots accrue). Verified: 30d +10.64% vs all-time -0.43% off a seeded baseline.)*
+  - Files: `src/lib/leaderboard.ts`, `src/pages/api/leaderboard.ts`, `src/pages/api/cron/snapshot-balances.ts`, `src/components/leaderboard/Leaderboard.tsx`
   - Size: Small
   - Depends: TASK-052
 

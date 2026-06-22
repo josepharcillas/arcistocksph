@@ -4,10 +4,18 @@ import { Skeleton } from '../ui/Skeleton';
 
 interface Row { rank: number; name: string; returnPct: number; totalValue: number }
 
+const PERIODS = [
+  { key: 'all', label: 'All-time' },
+  { key: 'month', label: '30 days' },
+  { key: 'week', label: '7 days' },
+] as const;
+type Period = (typeof PERIODS)[number]['key'];
+
 export default function Leaderboard() {
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [period, setPeriod] = useState<Period>('all');
 
   // opt-in state (logged-in users only)
   const [signedIn, setSignedIn] = useState(false);
@@ -15,14 +23,21 @@ export default function Leaderboard() {
   const [displayName, setDisplayName] = useState('');
   const [saved, setSaved] = useState(false);
 
-  async function loadBoard() {
-    const r = await fetch('/api/leaderboard').then((x) => x.json()).catch(() => ({ error: 'failed' }));
+  async function loadBoard(p: Period = period) {
+    setLoading(true);
+    setError('');
+    const r = await fetch(`/api/leaderboard?period=${p}`).then((x) => x.json()).catch(() => ({ error: 'failed' }));
     if (r.error) setError(r.error); else setRows(r);
     setLoading(false);
   }
 
+  function selectPeriod(p: Period) {
+    setPeriod(p);
+    loadBoard(p);
+  }
+
   useEffect(() => {
-    loadBoard();
+    loadBoard('all');
     supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (!user) return;
       setSignedIn(true);
@@ -67,6 +82,20 @@ export default function Leaderboard() {
           <p className="text-slate-500 text-xs mt-2">Ranked by paper-trading return from the ₱100,000 baseline.</p>
         </div>
       )}
+
+      <div className="flex gap-1.5">
+        {PERIODS.map((p) => (
+          <button
+            key={p.key}
+            onClick={() => selectPeriod(p.key)}
+            className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-colors ${
+              period === p.key ? 'bg-green-500 text-slate-950' : 'bg-slate-800 text-slate-400 hover:text-white'
+            }`}
+          >
+            {p.label}
+          </button>
+        ))}
+      </div>
 
       {loading ? (
         <div className="space-y-2">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}</div>

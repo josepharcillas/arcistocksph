@@ -94,6 +94,17 @@ create table paper_trades (
 alter table paper_trades enable row level security;
 create policy "Users manage own paper trades" on paper_trades using (auth.uid() = user_id);
 
+-- Daily portfolio-value snapshots (powers leaderboard week/month returns).
+-- Written server-side by the snapshot cron; one row per user per day.
+create table balance_snapshots (
+  user_id uuid references auth.users on delete cascade not null,
+  snapshot_date date not null,
+  total_value numeric not null,
+  primary key (user_id, snapshot_date)
+);
+alter table balance_snapshots enable row level security;
+create policy "Users read own snapshots" on balance_snapshots for select using (auth.uid() = user_id);
+
 -- Push notification subscriptions
 create table push_subscriptions (
   id uuid default uuid_generate_v4() primary key,

@@ -1,53 +1,54 @@
 import type { APIRoute } from 'astro';
 import { createSupabaseAdmin } from '../../lib/supabase-admin';
-import { fetchAllQuotes } from '../../lib/market';
+import { computeStandings, START_BALANCE } from '../../lib/leaderboard';
 
-const START_BALANCE = 100000;
-let cache: { data: unknown; expiresAt: number } | null = null;
 const CACHE_TTL_MS = 5 * 60 * 1000;
+const PERIOD_DAYS: Record<string, number> = { week: 7, month: 30 };
 
-export const GET: APIRoute = async () => {
-  if (cache && cache.expiresAt > Date.now()) {
-    return new Response(JSON.stringify(cache.data), { headers: { 'Content-Type': 'application/json' } });
+// period -> cached payload
+const cache = new Map<string, { data: unknown; expiresAt: number }>();
+
+export const GET: APIRoute = async ({ url }) => {
+  const period = url.searchParams.get('period') ?? 'all';
+  const days = PERIOD_DAYS[period]; // undefined for 'all'
+
+  const hit = cache.get(period);
+  if (hit && hit.expiresAt > Date.now()) {
+    return new Response(JSON.stringify(hit.data), { headers: { 'Content-Type': 'application/json' } });
   }
+
   try {
     const admin = createSupabaseAdmin();
+    const standings = await computeStandings(admin);
 
-    const [{ data: profiles }, { data: balances }, { data: trades }, quotes] = await Promise.all([
-      admin.from('profiles').select('id, display_name').eq('leaderboard_opt_in', true),
-      admin.from('paper_balances').select('user_id, balance'),
-      admin.from('paper_trades').select('user_id, ticker, action, qty, price'),
-      fetchAllQuotes().catch(() => new Map()),
-    ]);
-
-    const balByUser = new Map((balances ?? []).map((b: any) => [b.user_id, Number(b.balance)]));
-
-    // net position qty per user+ticker from the trade log
-    const posByUser = new Map<string, Map<string, number>>();
-    for (const t of trades ?? []) {
-      const m = posByUser.get(t.user_id) ?? new Map<string, number>();
-      m.set(t.ticker, (m.get(t.ticker) ?? 0) + (t.action === 'BUY' ? Number(t.qty) : -Number(t.qty)));
-      posByUser.set(t.user_id, m);
+    // Baseline per user: ₱100k for all-time; for week/month it's the earliest
+    // balance snapshot within the window (falls back to ₱100k until snapshots accrue).
+    const baselineByUser = new Map<string, number>();
+    if (days != null) {
+      const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
+      const { data: snaps } = await admin
+        .from('balance_snapshots')
+        .select('user_id, snapshot_date, total_value')
+        .gte('snapshot_date', since)
+        .order('snapshot_date', { ascending: true });
+      for (const s of snaps ?? []) {
+        if (!baselineByUser.has(s.user_id)) baselineByUser.set(s.user_id, Number(s.total_value));
+      }
     }
 
-    const rows = (profiles ?? [])
-      .map((p: any) => {
-        const cash = balByUser.get(p.id) ?? START_BALANCE;
-        let positionsValue = 0;
-        for (const [ticker, qty] of posByUser.get(p.id) ?? []) {
-          if (qty > 0) positionsValue += qty * ((quotes as Map<string, any>).get(ticker)?.price ?? 0);
-        }
-        const total = cash + positionsValue;
+    const rows = standings
+      .map((s) => {
+        const baseline = days != null ? (baselineByUser.get(s.userId) ?? START_BALANCE) : START_BALANCE;
         return {
-          name: p.display_name || 'Anonymous',
-          returnPct: (total / START_BALANCE - 1) * 100,
-          totalValue: total,
+          name: s.name,
+          returnPct: baseline > 0 ? (s.total / baseline - 1) * 100 : 0,
+          totalValue: s.total,
         };
       })
       .sort((a, b) => b.returnPct - a.returnPct)
       .map((r, i) => ({ rank: i + 1, ...r }));
 
-    cache = { data: rows, expiresAt: Date.now() + CACHE_TTL_MS };
+    cache.set(period, { data: rows, expiresAt: Date.now() + CACHE_TTL_MS });
     return new Response(JSON.stringify(rows), { headers: { 'Content-Type': 'application/json' } });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
