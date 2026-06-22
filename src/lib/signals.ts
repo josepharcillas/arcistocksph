@@ -46,6 +46,15 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
     computed_at: new Date().toISOString(),
   });
 
+  // Append to the accuracy log (price at signal time). Best-effort — never block.
+  const priceNow = stockData.technicals?.currentPrice;
+  if (priceNow) {
+    await admin
+      .from('signal_history')
+      .insert({ ticker: sym, verdict: result.verdict, confidence: result.confidence, price: priceNow })
+      .then(({ error }) => { if (error) console.warn('signal_history insert failed:', error.message); });
+  }
+
   // Notify holders only on the transition into SELL (not every recompute), and
   // only when push is configured. Fire-and-forget so it never blocks the caller.
   if (result.verdict === 'SELL' && cached?.verdict !== 'SELL' && isPushConfigured()) {

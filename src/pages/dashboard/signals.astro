@@ -1,6 +1,7 @@
 ---
 import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import SignalsFeed from '../../components/signals/SignalsFeed';
+import SignalAccuracy from '../../components/signals/SignalAccuracy';
 ---
 <DashboardLayout title="Signals">
   <div class="p-4 md:p-6">
@@ -9,6 +10,7 @@ import SignalsFeed from '../../components/signals/SignalsFeed';
       <p class="text-slate-400 text-sm mt-0.5">Buy/Sell/Hold recommendations for your holdings</p>
     </div>
 
+    <SignalAccuracy client:load />
     <SignalsFeed client:load />
 
     <p class="text-slate-600 text-xs mt-8 text-center">

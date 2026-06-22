@@ -5,6 +5,10 @@ export async function analyzeWithGroq(data: StockAnalysisInput): Promise<StockAn
   const apiKey = import.meta.env.GROQ_API_KEY ?? process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error('GROQ_API_KEY not set');
 
+  // 70B reasons far better about conflicting signals than the old 8b-instant.
+  // Override with GROQ_MODEL if Groq retires/renames it.
+  const model = import.meta.env.GROQ_MODEL ?? process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+
   const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
     headers: {
@@ -12,7 +16,7 @@ export async function analyzeWithGroq(data: StockAnalysisInput): Promise<StockAn
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: 'llama-3.1-8b-instant',
+      model,
       messages: [{ role: 'user', content: buildPrompt(data) }],
       temperature: 0.3,
       max_tokens: 512,

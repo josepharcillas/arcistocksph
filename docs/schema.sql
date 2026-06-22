@@ -142,6 +142,21 @@ create table signal_cache (
 );
 -- No RLS — signal cache is public read, server-only write
 
+-- Signal history — append-only log of every fresh signal + the price at the time,
+-- so we can measure how accurate the signals turned out to be (see /api/signals/accuracy).
+create table signal_history (
+  id uuid default uuid_generate_v4() primary key,
+  ticker text not null,
+  verdict text not null check (verdict in ('BUY', 'SELL', 'HOLD')),
+  confidence text not null,
+  price numeric not null,
+  created_at timestamptz default now()
+);
+alter table signal_history enable row level security;
+-- Public may read the stats; only the server (service_role, bypasses RLS) writes.
+create policy "Public read signal history" on signal_history for select using (true);
+create index signal_history_created_idx on signal_history (created_at);
+
 -- ---------------------------------------------------------------------------
 -- Role grants. Hosted Supabase auto-grants new tables to anon/authenticated via
 -- default privileges, but a raw schema.sql does NOT — without these, PostgREST
