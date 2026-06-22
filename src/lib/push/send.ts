@@ -7,6 +7,11 @@ function env(key: string): string | undefined {
   return import.meta.env[key] ?? process.env[key];
 }
 
+// Cheap check so callers can skip push work entirely when keys aren't set.
+export function isPushConfigured(): boolean {
+  return !!env('PUBLIC_FCM_VAPID_KEY') && !!env('VAPID_PRIVATE_KEY');
+}
+
 let configured = false;
 function configureVapid(): void {
   if (configured) return;
