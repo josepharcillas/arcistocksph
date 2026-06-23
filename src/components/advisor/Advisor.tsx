@@ -12,6 +12,7 @@ export default function Advisor() {
   const [cash, setCash] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
 
   useEffect(() => { load(); }, []);
 
@@ -62,6 +63,7 @@ export default function Advisor() {
       }))).then((ps) => ps.filter((p) => p.price > 0)); // skip unknown-price candidates
 
       setAdvice(computeAdvice([...heldPositions, ...watchPositions], cashVal, { ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk' }));
+      setLoadedAt(new Date());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not build your advice.');
     } finally {
@@ -110,6 +112,10 @@ export default function Advisor() {
           <p className="text-white text-lg font-bold">{DEFAULT_ADVISOR_CONFIG.maxWeightPct}%</p>
         </div>
       </div>
+
+      {loadedAt && (
+        <p className="text-slate-600 text-[11px] -mt-2">Data as of {loadedAt.toLocaleTimeString()} · prices may be delayed/EOD</p>
+      )}
 
       {/* Recommended actions */}
       <div>

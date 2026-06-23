@@ -27,6 +27,7 @@ export default function HoldingsList() {
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
   const [error, setError] = useState('');
+  const [loadedAt, setLoadedAt] = useState<Date | null>(null);
 
   async function load() {
     setLoading(true);
@@ -65,6 +66,7 @@ export default function HoldingsList() {
     }));
 
     setHoldings(enriched);
+    setLoadedAt(new Date());
     setLoading(false);
   }
 
@@ -99,6 +101,10 @@ export default function HoldingsList() {
         <div className="bg-red-400/10 border border-red-400/30 rounded-xl p-3 mb-4 text-red-300 text-sm">{error}</div>
       )}
       <PortfolioSummary totalValue={totalValue} totalCost={totalCost} holdingsCount={holdings.length} cash={cash} onSetCash={saveCash} />
+
+      {loadedAt && (
+        <p className="text-slate-600 text-[11px] mb-3">Data as of {loadedAt.toLocaleTimeString()} · prices may be delayed/EOD</p>
+      )}
 
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold">Holdings</h2>

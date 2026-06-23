@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { SkeletonCard } from '../ui/Skeleton';
+import { derivePositions } from '../../lib/paper';
 
 const START_BALANCE = 100000;
 
@@ -56,21 +57,9 @@ export default function PaperTrading() {
 
   useEffect(() => { load(); }, []);
 
-  // Derive positions from the trade log (net qty + weighted avg cost of open lots).
-  const positions: Position[] = (() => {
-    const byTicker: Record<string, { qty: number; cost: number }> = {};
-    [...trades].reverse().forEach((t) => {
-      const p = (byTicker[t.ticker] ??= { qty: 0, cost: 0 });
-      if (t.action === 'BUY') { p.cost += t.qty * Number(t.price); p.qty += t.qty; }
-      else { // SELL: reduce qty, keep avg cost
-        const avg = p.qty > 0 ? p.cost / p.qty : 0;
-        p.qty -= t.qty; p.cost -= avg * t.qty;
-      }
-    });
-    return Object.entries(byTicker)
-      .filter(([, p]) => p.qty > 0.0001)
-      .map(([ticker, p]) => ({ ticker, qty: p.qty, avgCost: p.cost / p.qty }));
-  })();
+  // Derive positions from the trade log (DB gives newest-first; derivePositions
+  // wants oldest-first). Math lives in src/lib/paper.ts (unit-tested).
+  const positions: Position[] = derivePositions([...trades].reverse());
 
   const positionsValue = positions.reduce((s, p) => s + p.qty * (quotes[p.ticker]?.price ?? p.avgCost), 0);
   const totalValue = balance + positionsValue;
