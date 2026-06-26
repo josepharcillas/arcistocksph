@@ -1,11 +1,16 @@
 import { defineMiddleware } from 'astro:middleware';
 import { createSupabaseServerClient } from './lib/supabase-server';
 import { rateLimit } from './lib/rateLimit';
+import { initScheduler } from './lib/scheduler';
 
 const PROTECTED = ['/dashboard', '/api/analyze', '/api/signals'];
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { request, cookies, redirect, locals, url } = context;
+
+  // Start the in-process auto-trade scheduler once, on the first request the
+  // server handles. Idempotent + guarded so it never breaks request handling.
+  try { initScheduler(); } catch (err) { console.warn('[scheduler] init failed:', err); }
 
   // Rate-limit API routes by client IP. AI endpoints get a tighter budget.
   if (url.pathname.startsWith('/api/')) {
