@@ -10,6 +10,15 @@ const SERVICE = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW
 const EMAIL = 'bot@arcistocks.local';
 const STARTING_CASH = 10000;
 
+// Mirrors BOT_CONFIG defaults in src/lib/autoTrade.ts (kept in sync; env overrides apply there).
+const RISK = {
+  maxWeightPct: Number(process.env.BOT_MAX_WEIGHT_PCT ?? 15),
+  riskPerTradePct: Number(process.env.BOT_RISK_PCT ?? 1),
+  stopLossPct: Number(process.env.BOT_STOP_LOSS_PCT ?? -8),
+  takeProfitPct: Number(process.env.BOT_TAKE_PROFIT_PCT ?? 20),
+  minBuyConfidence: (process.env.BOT_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(),
+};
+
 const admin = createClient(URL, SERVICE, { auth: { autoRefreshToken: false, persistSession: false } });
 
 const peso = (n) => '₱' + Number(n).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -70,6 +79,13 @@ console.log('    Holdings value     ' + padL(peso(holdingsValue), 16));
 console.log('    ─────────────────  ' + padL('', 16).replace(/ /g, ''));
 console.log('    Total equity       ' + padL(peso(equity), 16));
 console.log('    Total P/L          ' + padL(peso(totalPl), 16) + '   (' + pct(totalPlPct) + ')');
+
+console.log('\n  RISK SETTINGS (capital protection)');
+console.log('    Stop-loss (auto-sell)    ' + padL(RISK.stopLossPct + '%', 8));
+console.log('    Take-profit (auto-sell)  ' + padL('+' + RISK.takeProfitPct + '%', 8));
+console.log('    Max per stock            ' + padL(RISK.maxWeightPct + '%', 8));
+console.log('    Risk per trade           ' + padL(RISK.riskPerTradePct + '%', 8));
+console.log('    Min BUY confidence       ' + padL(RISK.minBuyConfidence, 8));
 
 console.log('\n  POSITIONS (' + hs.length + ')');
 if (hs.length === 0) {

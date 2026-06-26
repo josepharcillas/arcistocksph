@@ -22,6 +22,20 @@ const BOT_EMAIL = process.env.BOT_EMAIL ?? 'bot@arcistocks.local';
 export const STARTING_CASH = 10000;
 const FRESH_MS = 4 * 60 * 60 * 1000; // mirrors signal_cache TTL
 
+// Capital-protection risk config (override via env). Defensive by design: cap each
+// position, risk little per trade, auto stop-loss + take-profit, and only act on
+// higher-conviction BUYs. Goal: limit downside, lock gains — not chase max return.
+export const BOT_CONFIG = {
+  maxWeightPct: Number(process.env.BOT_MAX_WEIGHT_PCT ?? 15),     // most of equity in one stock
+  riskPerTradePct: Number(process.env.BOT_RISK_PCT ?? 1),         // % of equity risked to the stop per trade
+  stopLossPct: Number(process.env.BOT_STOP_LOSS_PCT ?? -8),       // auto-exit if a holding falls this % vs cost
+  takeProfitPct: Number(process.env.BOT_TAKE_PROFIT_PCT ?? 20),   // auto-exit if a holding rises this % vs cost
+  minBuyConfidence: (process.env.BOT_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(), // skip weaker BUYs
+};
+
+const confValue = (c?: string | null): number => (c === 'HIGH' ? 3 : c === 'MEDIUM' ? 2 : c === 'LOW' ? 1 : 0);
+const meetsMinConfidence = (c?: string | null): boolean => confValue(c) >= confValue(BOT_CONFIG.minBuyConfidence);
+
 export interface AutoTradeResult {
   ok: boolean;
   ranAt: string;
@@ -35,6 +49,7 @@ export interface AutoTradeResult {
   pnlPct: number;          // vs the ₱10,000 baseline
   actions: { kind: string; ticker?: string; shares?: number; pesos?: number; reason: string }[];
   holdings: { ticker: string; qty: number; avgCost: number; price: number; value: number }[];
+  config: typeof BOT_CONFIG;
 }
 
 export interface AutoTradeOptions {
@@ -116,22 +131,27 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
 
   const byTicker = new Map(holdings.map((h) => [h.ticker, { ...h }]));
 
-  // --- SELL pass: follow ArciStocks faithfully. Exit ANY holding the app now
-  //     rates SELL (full exit, regardless of P/L) — this is what makes the run a
-  //     true test of "do the suggestions make money?". Frees cash for new BUYs. ---
+  // --- SELL pass: protect capital + follow ArciStocks. Fully exit a holding if
+  //     ANY of these is true: the app rates it SELL, it hit the stop-loss, or it
+  //     hit the take-profit. Stop-loss caps losses; take-profit locks gains. ---
   const sellActions: AutoTradeResult['actions'] = [];
   for (const h of holdings) {
-    if (cacheMap.get(h.ticker)?.verdict !== 'SELL') continue;
+    const sig = cacheMap.get(h.ticker);
     const p = price(h.ticker) || h.buy_price;
-    const proceeds = h.qty * p;
     const plPct = h.buy_price > 0 ? ((p - h.buy_price) / h.buy_price) * 100 : 0;
+    let why: string | null = null;
+    if (sig?.verdict === 'SELL') why = 'SELL signal';
+    else if (plPct <= BOT_CONFIG.stopLossPct) why = `stop-loss (${BOT_CONFIG.stopLossPct}%)`;
+    else if (plPct >= BOT_CONFIG.takeProfitPct) why = `take-profit (+${BOT_CONFIG.takeProfitPct}%)`;
+    if (!why) continue;
+    const proceeds = h.qty * p;
     cash += proceeds;
     await admin.from('holdings').delete().eq('user_id', botId).eq('ticker', h.ticker);
     byTicker.delete(h.ticker);
     await logTrade(admin, botId, h.ticker, 'SELL', h.qty, p, h.company_name);
     sellActions.push({
       kind: 'EXIT', ticker: h.ticker, shares: h.qty, pesos: proceeds,
-      reason: `SELL signal — sold all ${h.qty} share(s) at ₱${p.toFixed(2)} (${plPct >= 0 ? '+' : ''}${plPct.toFixed(0)}% vs cost).`,
+      reason: `${why} — sold all ${h.qty} share(s) at ₱${p.toFixed(2)} (${plPct >= 0 ? '+' : ''}${plPct.toFixed(0)}% vs cost).`,
     });
   }
 
@@ -140,22 +160,29 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   const positions: AdvisorPosition[] = [];
   for (const h of byTicker.values()) {
     const s = cacheMap.get(h.ticker);
+    // Only let the advisor ADD to a holding on a BUY that clears the confidence
+    // floor; otherwise treat as HOLD so we don't average up on weak conviction.
+    const verdict = s?.verdict === 'BUY' && !meetsMinConfidence(s?.confidence) ? 'HOLD' : (s?.verdict ?? null);
     positions.push({
       ticker: h.ticker, shares: h.qty, avgCost: h.buy_price, price: price(h.ticker) || h.buy_price,
-      verdict: s?.verdict ?? null, confidence: s?.confidence ?? null, stopLoss: s?.stop_loss ?? null,
+      verdict, confidence: s?.confidence ?? null, stopLoss: s?.stop_loss ?? null,
     });
   }
   let buyCandidates = 0;
   for (const q of universe) {
     if (byTicker.has(q.symbol)) continue;
     const s = cacheMap.get(q.symbol);
-    if (s?.verdict === 'BUY' && q.price > 0) {
+    // New positions: only higher-conviction BUYs (skip LOW confidence).
+    if (s?.verdict === 'BUY' && meetsMinConfidence(s?.confidence) && q.price > 0) {
       buyCandidates++;
       positions.push({ ticker: q.symbol, shares: 0, avgCost: 0, price: q.price, verdict: 'BUY', confidence: s.confidence ?? null, stopLoss: s.stop_loss ?? null });
     }
   }
 
-  const advice = computeAdvice(positions, cash, { ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk' });
+  const advice = computeAdvice(positions, cash, {
+    ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk',
+    maxWeightPct: BOT_CONFIG.maxWeightPct, riskPerTradePct: BOT_CONFIG.riskPerTradePct,
+  });
 
   // Execute the advisor's BUY + TRIM actions. (SELLs already handled above; the
   // surviving positions carry only HOLD/BUY verdicts, so no EXIT is produced here.)
@@ -215,7 +242,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     universe: universe.length, signalsComputed, buyCandidates,
     cashBefore, cashAfter: cash, equity,
     pnlPct: ((equity - STARTING_CASH) / STARTING_CASH) * 100,
-    actions, holdings: finalHoldings,
+    actions, holdings: finalHoldings, config: BOT_CONFIG,
   };
 }
 
