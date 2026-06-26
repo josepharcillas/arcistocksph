@@ -41,7 +41,7 @@ Respond ONLY in this exact JSON format:
 {
   "verdict": "BUY" | "SELL" | "HOLD",
   "confidence": "HIGH" | "MEDIUM" | "LOW",
-  "rationale": "2-3 sentence explanation in plain English, Filipino-friendly tone. Explain why without jargon.",
+  "rationale": "2-3 sentence explanation in clear, plain English ONLY (no Tagalog/Filipino words). Explain why without jargon.",
   "targetPrice": number or null,
   "stopLoss": number or null
 }`;

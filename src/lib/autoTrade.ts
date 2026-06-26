@@ -114,9 +114,31 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     }
   }
 
-  // --- Build advisor positions: held + every BUY-signalled stock in the universe ---
-  const positions: AdvisorPosition[] = [];
+  const byTicker = new Map(holdings.map((h) => [h.ticker, { ...h }]));
+
+  // --- SELL pass: follow ArciStocks faithfully. Exit ANY holding the app now
+  //     rates SELL (full exit, regardless of P/L) — this is what makes the run a
+  //     true test of "do the suggestions make money?". Frees cash for new BUYs. ---
+  const sellActions: AutoTradeResult['actions'] = [];
   for (const h of holdings) {
+    if (cacheMap.get(h.ticker)?.verdict !== 'SELL') continue;
+    const p = price(h.ticker) || h.buy_price;
+    const proceeds = h.qty * p;
+    const plPct = h.buy_price > 0 ? ((p - h.buy_price) / h.buy_price) * 100 : 0;
+    cash += proceeds;
+    await admin.from('holdings').delete().eq('user_id', botId).eq('ticker', h.ticker);
+    byTicker.delete(h.ticker);
+    await logTrade(admin, botId, h.ticker, 'SELL', h.qty, p, h.company_name);
+    sellActions.push({
+      kind: 'EXIT', ticker: h.ticker, shares: h.qty, pesos: proceeds,
+      reason: `SELL signal — sold all ${h.qty} share(s) at ₱${p.toFixed(2)} (${plPct >= 0 ? '+' : ''}${plPct.toFixed(0)}% vs cost).`,
+    });
+  }
+
+  // --- BUY/TRIM pass: feed surviving holdings + every BUY-signalled stock to the
+  //     risk-managed advisor, which sizes new positions and trims over-concentration. ---
+  const positions: AdvisorPosition[] = [];
+  for (const h of byTicker.values()) {
     const s = cacheMap.get(h.ticker);
     positions.push({
       ticker: h.ticker, shares: h.qty, avgCost: h.buy_price, price: price(h.ticker) || h.buy_price,
@@ -125,7 +147,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   }
   let buyCandidates = 0;
   for (const q of universe) {
-    if (held.has(q.symbol)) continue;
+    if (byTicker.has(q.symbol)) continue;
     const s = cacheMap.get(q.symbol);
     if (s?.verdict === 'BUY' && q.price > 0) {
       buyCandidates++;
@@ -135,8 +157,8 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
 
   const advice = computeAdvice(positions, cash, { ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk' });
 
-  // --- Execute the recommended actions against the bot's holdings + cash ---
-  const byTicker = new Map(holdings.map((h) => [h.ticker, { ...h }]));
+  // Execute the advisor's BUY + TRIM actions. (SELLs already handled above; the
+  // surviving positions carry only HOLD/BUY verdicts, so no EXIT is produced here.)
   for (const a of advice.actions) {
     if (a.kind === 'BUY' && a.ticker && a.shares) {
       const p = price(a.ticker);
@@ -155,7 +177,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
         byTicker.set(a.ticker, { ticker: a.ticker, qty: a.shares, buy_price: p, company_name: name });
       }
       await logTrade(admin, botId, a.ticker, 'BUY', a.shares, p, quotes.get(a.ticker)?.name);
-    } else if ((a.kind === 'EXIT' || a.kind === 'TRIM') && a.ticker && a.shares) {
+    } else if (a.kind === 'TRIM' && a.ticker && a.shares) {
       const ex = byTicker.get(a.ticker);
       if (!ex) continue;
       const p = price(a.ticker) || ex.buy_price;
@@ -171,6 +193,9 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
       await logTrade(admin, botId, a.ticker, 'SELL', a.shares, p, ex.company_name);
     }
   }
+
+  // All actions taken this run = signal-driven SELLs + advisor BUY/TRIM/HOLD.
+  const actions = [...sellActions, ...advice.actions.filter((a) => a.kind !== 'EXIT')];
 
   // --- Persist cash, snapshot equity ---
   await admin.from('portfolio_cash').upsert({ user_id: botId, cash, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
@@ -190,7 +215,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     universe: universe.length, signalsComputed, buyCandidates,
     cashBefore, cashAfter: cash, equity,
     pnlPct: ((equity - STARTING_CASH) / STARTING_CASH) * 100,
-    actions: advice.actions, holdings: finalHoldings,
+    actions, holdings: finalHoldings,
   };
 }
 
