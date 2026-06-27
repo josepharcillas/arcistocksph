@@ -3,10 +3,26 @@ import type { StockAnalysisInput, StockAnalysisResult, Verdict } from './types';
 export function buildPrompt(data: StockAnalysisInput): string {
   const { ticker, companyName, technicals, fundamentals, headlines } = data;
   const t = technicals;
+  const isCrypto = data.assetClass === 'crypto';
 
-  return `You are a disciplined, skeptical equity analyst for the Philippine Stock Exchange (PSE). Give a BUY, SELL, or HOLD call — but be balanced and avoid a bullish bias.
+  const intro = isCrypto
+    ? `You are a disciplined, skeptical cryptocurrency analyst. Give a BUY, SELL, or HOLD call on this crypto asset (priced in PHP) — be balanced and avoid a bullish bias. Crypto is highly volatile and trades 24/7; lean on price trend + momentum, and remember there are no traditional fundamentals.`
+    : `You are a disciplined, skeptical equity analyst for the Philippine Stock Exchange (PSE). Give a BUY, SELL, or HOLD call — but be balanced and avoid a bullish bias.`;
 
-CALIBRATION RULES (follow strictly):
+  const calibration = isCrypto
+    ? `CALIBRATION RULES (follow strictly):
+- Match the call to the evidence — do NOT have a standing bias toward BUY or toward HOLD.
+- Weigh bullish and bearish evidence equally:
+  - Bullish: price above rising SMA20/50, positive MACD histogram, RSI rebounding from <30, positive news/adoption.
+  - Bearish: price below SMA50/200, negative MACD histogram, RSI > 70 (overbought) or rolling over, negative news.
+- Make a directional call (BUY or SELL) when trend + momentum lean one way. Reserve HOLD for genuinely mixed/conflicting signals, not as a default.
+- Respect crypto's volatility: a few percent move is noise; look for a clear trend.
+- Confidence reflects evidence strength, not enthusiasm:
+  - HIGH = trend, momentum, AND news all agree.
+  - MEDIUM = technicals clearly lean one way but confirmation is partial.
+  - LOW = signals conflict or the move is marginal.
+- targetPrice/stopLoss should be realistic levels derived from the price and SMAs, or null if you can't justify them.`
+    : `CALIBRATION RULES (follow strictly):
 - Match the call to the evidence — do NOT have a standing bias toward BUY or toward HOLD.
 - Weigh bullish and bearish evidence equally:
   - Bullish: price above rising SMA20/50, positive MACD histogram, RSI rebounding from <30, positive news.
@@ -16,9 +32,21 @@ CALIBRATION RULES (follow strictly):
   - HIGH = trend, momentum, AND (fundamentals or news) all agree. With fundamentals N/A, HIGH should be rare.
   - MEDIUM = the technicals clearly lean one way but confirmation is partial or data is missing.
   - LOW = signals conflict or the move is marginal.
-- targetPrice/stopLoss should be realistic levels derived from the price and SMAs, or null if you can't justify them.
+- targetPrice/stopLoss should be realistic levels derived from the price and SMAs, or null if you can't justify them.`;
 
-STOCK: ${ticker} (${companyName})
+  const fundamentalsBlock = isCrypto ? '' : `
+FUNDAMENTALS:
+- Market Cap: ${fundamentals.marketCap != null ? '₱' + (fundamentals.marketCap / 1e9).toFixed(2) + 'B' : 'N/A'}
+- P/E Ratio: ${fundamentals.pe ?? 'N/A'}
+- Book Value: ${fundamentals.bookValue != null ? '₱' + fundamentals.bookValue.toFixed(2) : 'N/A'}
+- Dividend Yield: ${fundamentals.dividendYield != null ? fundamentals.dividendYield.toFixed(2) + '%' : 'N/A'}
+`;
+
+  return `${intro}
+
+${calibration}
+
+${isCrypto ? 'CRYPTO' : 'STOCK'}: ${ticker} (${companyName})
 
 TECHNICALS:
 - Current Price: ₱${t.currentPrice.toFixed(2)}
@@ -27,13 +55,7 @@ TECHNICALS:
 - SMA 20: ₱${t.sma20.toFixed(2)} | SMA 50: ₱${t.sma50.toFixed(2)} | SMA 200: ₱${t.sma200.toFixed(2)}
 - 1-day change: ${t.priceChange1d >= 0 ? '+' : ''}${t.priceChange1d.toFixed(2)}%
 - 1-week change: ${t.priceChange1w >= 0 ? '+' : ''}${t.priceChange1w.toFixed(2)}%
-
-FUNDAMENTALS:
-- Market Cap: ${fundamentals.marketCap != null ? '₱' + (fundamentals.marketCap / 1e9).toFixed(2) + 'B' : 'N/A'}
-- P/E Ratio: ${fundamentals.pe ?? 'N/A'}
-- Book Value: ${fundamentals.bookValue != null ? '₱' + fundamentals.bookValue.toFixed(2) : 'N/A'}
-- Dividend Yield: ${fundamentals.dividendYield != null ? fundamentals.dividendYield.toFixed(2) + '%' : 'N/A'}
-
+${fundamentalsBlock}
 RECENT NEWS:
 ${headlines.length > 0 ? headlines.slice(0, 5).map((h, i) => `${i + 1}. ${h}`).join('\n') : 'No recent news found.'}
 

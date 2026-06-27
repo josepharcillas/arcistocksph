@@ -26,7 +26,9 @@ export const POST: APIRoute = async ({ request }) => {
   try {
     const admin = createSupabaseAdmin();
     const { data: holdings } = await admin.from('holdings').select('ticker');
-    const tickers = [...new Set((holdings ?? []).map((h: any) => h.ticker as string))];
+    // Skip crypto-namespaced tickers ("X:BTC") — those are the crypto bot's and
+    // are refreshed by its own pipeline, not the PSE stock signal path.
+    const tickers = [...new Set((holdings ?? []).map((h: any) => h.ticker as string))].filter((t) => !t.includes(':'));
 
     let recomputed = 0;
     let sells = 0;

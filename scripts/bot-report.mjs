@@ -1,17 +1,28 @@
-// Prints a performance report for the ₱10k auto-trading bot.
-// Standalone: reads local Supabase (service role) + live phisix quotes directly,
-// so it works whether or not the dev server is running.
+// Prints a performance report for a ₱10k auto-trading bot.
+// Standalone: reads local Supabase (service role) + live prices directly, so it
+// works whether or not the dev server is running.
 //
-//   node scripts/bot-report.mjs
+//   node scripts/bot-report.mjs            # stock bot
+//   node scripts/bot-report.mjs --crypto   # crypto bot
 import { createClient } from '@supabase/supabase-js';
 
 const URL = 'http://127.0.0.1:54321';
 const SERVICE = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
-const EMAIL = 'bot@arcistocks.local';
+const CRYPTO = process.argv.includes('--crypto');
+const EMAIL = CRYPTO ? 'crypto-bot@arcistocks.local' : 'bot@arcistocks.local';
+const TITLE = CRYPTO ? 'AI AUTO-TRADER — CRYPTO' : 'AI AUTO-TRADER — STOCKS';
 const STARTING_CASH = 10000;
+const PREFIX = 'X:';
+const strip = (t) => String(t).replace(/^X:/, '');
 
-// Mirrors BOT_CONFIG defaults in src/lib/autoTrade.ts (kept in sync; env overrides apply there).
-const RISK = {
+// Mirrors BOT_CONFIG / CRYPTO_CONFIG defaults in src/lib/autoTrade.ts.
+const RISK = CRYPTO ? {
+  maxWeightPct: Number(process.env.BOT_CRYPTO_MAX_WEIGHT_PCT ?? 20),
+  riskPerTradePct: Number(process.env.BOT_CRYPTO_RISK_PCT ?? 1),
+  stopLossPct: Number(process.env.BOT_CRYPTO_STOP_LOSS_PCT ?? -15),
+  takeProfitPct: Number(process.env.BOT_CRYPTO_TAKE_PROFIT_PCT ?? 35),
+  minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'HIGH').toUpperCase(),
+} : {
   maxWeightPct: Number(process.env.BOT_MAX_WEIGHT_PCT ?? 15),
   riskPerTradePct: Number(process.env.BOT_RISK_PCT ?? 1),
   stopLossPct: Number(process.env.BOT_STOP_LOSS_PCT ?? -8),
@@ -26,18 +37,26 @@ const pct = (n) => (n >= 0 ? '+' : '') + n.toFixed(2) + '%';
 const pad = (s, w) => String(s).padEnd(w);
 const padL = (s, w) => String(s).padStart(w);
 
+// Live prices keyed by the STORED ticker (crypto uses the "X:" prefix in the DB).
 async function liveQuotes() {
+  const m = new Map();
+  if (CRYPTO) {
+    try {
+      const r = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=php&order=market_cap_desc&per_page=100&page=1', { headers: { 'User-Agent': 'Mozilla/5.0' } });
+      if (r.ok) for (const c of await r.json()) m.set(PREFIX + String(c.symbol).toUpperCase(), c.current_price ?? 0);
+    } catch { /* offline */ }
+    return m;
+  }
   for (const host of ['https://phisix-api3.appspot.com', 'https://phisix-api4.appspot.com']) {
     try {
       const r = await fetch(`${host}/stocks.json`, { headers: { 'User-Agent': 'Mozilla/5.0' } });
       if (!r.ok) continue;
       const j = await r.json();
-      const m = new Map();
       for (const s of j?.stocks ?? []) m.set(s.symbol, s.price?.amount ?? 0);
       if (m.size) return m;
     } catch { /* next host */ }
   }
-  return new Map();
+  return m;
 }
 
 const { data: list } = await admin.auth.admin.listUsers({ perPage: 200 });
@@ -58,7 +77,7 @@ const hs = (holdings ?? []).map((h) => {
   const price = quotes.get(h.ticker) ?? Number(h.buy_price);
   const value = Number(h.qty) * price;
   const cost = Number(h.qty) * Number(h.buy_price);
-  return { ticker: h.ticker, qty: Number(h.qty), avg: Number(h.buy_price), price, value, plPesos: value - cost, plPct: cost > 0 ? ((value - cost) / cost) * 100 : 0 };
+  return { ticker: strip(h.ticker), qty: Number(h.qty), avg: Number(h.buy_price), price, value, plPesos: value - cost, plPct: cost > 0 ? ((value - cost) / cost) * 100 : 0 };
 }).sort((a, b) => b.value - a.value);
 
 const holdingsValue = hs.reduce((s, h) => s + h.value, 0);
@@ -68,7 +87,7 @@ const totalPlPct = (totalPl / STARTING_CASH) * 100;
 
 const line = '─'.repeat(72);
 console.log('\n' + line);
-console.log('  🤖 ARCISTOCKS AI AUTO-TRADER — PERFORMANCE REPORT');
+console.log('  🤖 ARCISTOCKS ' + TITLE + ' — PERFORMANCE REPORT');
 console.log('  as of ' + new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }));
 console.log(line);
 
@@ -143,7 +162,7 @@ if (!trades?.length) {
   for (const t of trades.slice(0, 25)) {
     const when = new Date(t.traded_at).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
     const tag = t.action === 'BUY' ? 'BUY ' : 'SELL';
-    console.log('    ' + pad(when, 9) + pad(tag, 6) + pad(t.ticker, 8) + padL(t.qty + ' @ ' + peso(t.price), 22) + padL('= ' + peso(t.total), 16));
+    console.log('    ' + pad(when, 9) + pad(tag, 6) + pad(strip(t.ticker), 8) + padL(t.qty + ' @ ' + peso(t.price), 22) + padL('= ' + peso(t.total), 16));
   }
   if (trades.length > 25) console.log('    … and ' + (trades.length - 25) + ' more');
 }

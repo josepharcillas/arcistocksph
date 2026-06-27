@@ -35,6 +35,7 @@ export interface StockAnalysisInput {
   technicals: Technicals;
   fundamentals: Fundamentals;
   headlines: string[];
+  assetClass?: 'stock' | 'crypto'; // defaults to stock; switches the AI prompt framing
 }
 
 export type Verdict = 'BUY' | 'SELL' | 'HOLD';

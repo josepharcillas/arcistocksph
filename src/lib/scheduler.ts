@@ -31,29 +31,39 @@ export function initScheduler(): void {
   const override = process.env.AUTOTRADE_CRON ?? import.meta.env?.AUTOTRADE_CRON;
   const exprs = override ? override.split(';').map((s) => s.trim()).filter(Boolean) : DEFAULT_CRONS;
 
-  const run = async () => {
+  const run = (assetClass: 'stock' | 'crypto') => async () => {
     try {
-      const r = await runAutoTrade();
-      console.log(`[auto-trade] ${r.actions.length} action(s) · equity ₱${r.equity.toFixed(2)} (${r.pnlPct >= 0 ? '+' : ''}${r.pnlPct.toFixed(2)}%)`);
+      const r = await runAutoTrade({ assetClass });
+      console.log(`[auto-trade:${assetClass}] ${r.actions.length} action(s) · equity ₱${r.equity.toFixed(2)} (${r.pnlPct >= 0 ? '+' : ''}${r.pnlPct.toFixed(2)}%)`);
     } catch (err) {
-      console.warn('[auto-trade] run failed:', err instanceof Error ? err.message : err);
+      console.warn(`[auto-trade:${assetClass}] run failed:`, err instanceof Error ? err.message : err);
     }
   };
 
   const scheduled: string[] = [];
   for (const expr of exprs) {
     if (!cron.validate(expr)) {
-      console.warn('[scheduler] skipping invalid cron expr:', expr);
+      console.warn('[scheduler] skipping invalid stock cron expr:', expr);
       continue;
     }
-    cron.schedule(expr, run, { timezone: 'Etc/UTC' });
+    cron.schedule(expr, run('stock'), { timezone: 'Etc/UTC' });
     scheduled.push(expr);
   }
 
-  if (scheduled.length === 0) {
+  // Crypto trades 24/7 — run it round the clock (default every 15 min). Lighter
+  // cadence than stocks to stay friendly to CoinGecko's free rate limits.
+  const cryptoExpr = process.env.AUTOTRADE_CRYPTO_CRON ?? import.meta.env?.AUTOTRADE_CRYPTO_CRON ?? '*/15 * * * *';
+  let cryptoScheduled = false;
+  if (process.env.DISABLE_CRYPTO_BOT !== '1' && cron.validate(cryptoExpr)) {
+    cron.schedule(cryptoExpr, run('crypto'), { timezone: 'Etc/UTC' });
+    cryptoScheduled = true;
+  }
+
+  if (scheduled.length === 0 && !cryptoScheduled) {
     console.warn('[scheduler] no valid cron expressions — bot scheduler disabled');
     started = false;
     return;
   }
-  console.log(`[scheduler] auto-trade bot scheduled (UTC): ${scheduled.map((e) => `"${e}"`).join(', ')} — every 5 min, 9:30am–3:30pm PHT, Mon–Fri`);
+  console.log(`[scheduler] STOCK bot (UTC): ${scheduled.map((e) => `"${e}"`).join(', ')} — every 5 min, 9:30am–3:30pm PHT, Mon–Fri`);
+  if (cryptoScheduled) console.log(`[scheduler] CRYPTO bot (UTC): "${cryptoExpr}" — 24/7`);
 }
