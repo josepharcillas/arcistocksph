@@ -41,7 +41,9 @@ export const CRYPTO_CONFIG = {
   riskPerTradePct: Number(process.env.BOT_CRYPTO_RISK_PCT ?? 1),
   stopLossPct: Number(process.env.BOT_CRYPTO_STOP_LOSS_PCT ?? -15),
   takeProfitPct: Number(process.env.BOT_CRYPTO_TAKE_PROFIT_PCT ?? 35),
-  minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'HIGH').toUpperCase(),
+  // MEDIUM (not HIGH): the AI almost never rates crypto HIGH, so HIGH-only left the
+  // bot inert (0 trades). MEDIUM lets it actually participate; the -15% stop still caps risk.
+  minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(),
 };
 
 const confValue = (c?: string | null): number => (c === 'HIGH' ? 3 : c === 'MEDIUM' ? 2 : c === 'LOW' ? 1 : 0);

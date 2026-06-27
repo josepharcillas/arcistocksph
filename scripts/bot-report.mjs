@@ -21,7 +21,7 @@ const RISK = CRYPTO ? {
   riskPerTradePct: Number(process.env.BOT_CRYPTO_RISK_PCT ?? 1),
   stopLossPct: Number(process.env.BOT_CRYPTO_STOP_LOSS_PCT ?? -15),
   takeProfitPct: Number(process.env.BOT_CRYPTO_TAKE_PROFIT_PCT ?? 35),
-  minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'HIGH').toUpperCase(),
+  minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(),
 } : {
   maxWeightPct: Number(process.env.BOT_MAX_WEIGHT_PCT ?? 15),
   riskPerTradePct: Number(process.env.BOT_RISK_PCT ?? 1),
