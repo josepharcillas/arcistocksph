@@ -87,6 +87,32 @@ console.log('    Max per stock            ' + padL(RISK.maxWeightPct + '%', 8));
 console.log('    Risk per trade           ' + padL(RISK.riskPerTradePct + '%', 8));
 console.log('    Min BUY confidence       ' + padL(RISK.minBuyConfidence, 8));
 
+// Decision accuracy: replay the trade log oldest-first, computing realized P/L on
+// every SELL (vs running average cost) → win rate = how often the bot was right.
+const chrono = [...(trades ?? [])].reverse();
+const book = {};
+let wins = 0, losses = 0, realized = 0, closed = 0;
+for (const t of chrono) {
+  const b = (book[t.ticker] ??= { qty: 0, cost: 0 });
+  const q = Number(t.qty), pr = Number(t.price);
+  if (t.action === 'BUY') { b.cost += q * pr; b.qty += q; }
+  else {
+    const avg = b.qty > 0 ? b.cost / b.qty : pr;
+    const pl = (pr - avg) * q;
+    realized += pl; closed++; if (pl >= 0) wins++; else losses++;
+    b.qty -= q; b.cost -= avg * q;
+  }
+}
+console.log('\n  DECISION ACCURACY (closed trades)');
+if (closed === 0) {
+  console.log('    — no closed trades yet (positions still open) —');
+} else {
+  console.log('    Closed trades       ' + padL(closed, 8));
+  console.log('    Wins / Losses       ' + padL(wins + ' / ' + losses, 8));
+  console.log('    Win rate            ' + padL(((wins / closed) * 100).toFixed(0) + '%', 8));
+  console.log('    Realized P/L        ' + padL(peso(realized), 12));
+}
+
 console.log('\n  POSITIONS (' + hs.length + ')');
 if (hs.length === 0) {
   console.log('    — none (all cash) —');
