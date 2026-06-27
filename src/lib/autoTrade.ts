@@ -30,7 +30,7 @@ export const BOT_CONFIG = {
   riskPerTradePct: Number(process.env.BOT_RISK_PCT ?? 1),         // % of equity risked to the stop per trade
   stopLossPct: Number(process.env.BOT_STOP_LOSS_PCT ?? -8),       // auto-exit if a holding falls this % vs cost
   takeProfitPct: Number(process.env.BOT_TAKE_PROFIT_PCT ?? 20),   // auto-exit if a holding rises this % vs cost
-  minBuyConfidence: (process.env.BOT_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(), // skip weaker BUYs
+  minBuyConfidence: (process.env.BOT_MIN_CONFIDENCE ?? 'HIGH').toUpperCase(), // only strongest BUYs
 };
 
 const confValue = (c?: string | null): number => (c === 'HIGH' ? 3 : c === 'MEDIUM' ? 2 : c === 'LOW' ? 1 : 0);

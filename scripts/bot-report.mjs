@@ -16,7 +16,7 @@ const RISK = {
   riskPerTradePct: Number(process.env.BOT_RISK_PCT ?? 1),
   stopLossPct: Number(process.env.BOT_STOP_LOSS_PCT ?? -8),
   takeProfitPct: Number(process.env.BOT_TAKE_PROFIT_PCT ?? 20),
-  minBuyConfidence: (process.env.BOT_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(),
+  minBuyConfidence: (process.env.BOT_MIN_CONFIDENCE ?? 'HIGH').toUpperCase(),
 };
 
 const admin = createClient(URL, SERVICE, { auth: { autoRefreshToken: false, persistSession: false } });
