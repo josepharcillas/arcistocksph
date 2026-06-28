@@ -6,3 +6,6 @@ node_modules/
 
 # Compound Engineering machine-local config
 .compound-engineering/*.local.yaml
+
+# Generated bot daily reports
+reports/

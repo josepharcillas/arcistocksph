@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import { runAutoTrade } from './autoTrade';
+import { writeDailyReport } from './scoreboard';
 
 // In-process scheduler: while the server is running, fire the auto-trade bot on a
 // cron with no external scheduler needed. Initialised once from middleware.
@@ -59,6 +60,16 @@ export function initScheduler(): void {
     cryptoScheduled = true;
   }
 
+  // Daily report: log + save a both-bots scoreboard once a day after PSE close
+  // (default 3:35pm PHT = 07:35 UTC). Override AUTOTRADE_REPORT_CRON; set
+  // DISABLE_DAILY_REPORT=1 to turn off.
+  const reportExpr = process.env.AUTOTRADE_REPORT_CRON ?? import.meta.env?.AUTOTRADE_REPORT_CRON ?? '35 7 * * *';
+  let reportScheduled = false;
+  if (process.env.DISABLE_DAILY_REPORT !== '1' && cron.validate(reportExpr)) {
+    cron.schedule(reportExpr, () => { writeDailyReport().catch((e) => console.warn('[daily-report] failed:', e)); }, { timezone: 'Etc/UTC' });
+    reportScheduled = true;
+  }
+
   if (scheduled.length === 0 && !cryptoScheduled) {
     console.warn('[scheduler] no valid cron expressions — bot scheduler disabled');
     started = false;
@@ -66,4 +77,5 @@ export function initScheduler(): void {
   }
   console.log(`[scheduler] STOCK bot (UTC): ${scheduled.map((e) => `"${e}"`).join(', ')} — every 5 min, 9:30am–3:30pm PHT, Mon–Fri`);
   if (cryptoScheduled) console.log(`[scheduler] CRYPTO bot (UTC): "${cryptoExpr}" — 24/7`);
+  if (reportScheduled) console.log(`[scheduler] DAILY report (UTC): "${reportExpr}" — logs + saves ./reports`);
 }

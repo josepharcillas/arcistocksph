@@ -17,6 +17,7 @@ import { fetchTopCryptoQuotes, CRYPTO_PREFIX } from './market/crypto';
 import { getOrComputeSignal } from './signals';
 import { getOrComputeCryptoSignal } from './cryptoSignals';
 import { computeAdvice, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition } from './advisor';
+import { meetsMinConfidence as meetsMin, pnlPct, exitReason, addToPosition } from './botLogic';
 
 export type AssetClass = 'stock' | 'crypto';
 
@@ -46,7 +47,6 @@ export const CRYPTO_CONFIG = {
   minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(),
 };
 
-const confValue = (c?: string | null): number => (c === 'HIGH' ? 3 : c === 'MEDIUM' ? 2 : c === 'LOW' ? 1 : 0);
 
 export interface AutoTradeResult {
   ok: boolean;
@@ -113,7 +113,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   const assetClass: AssetClass = opts.assetClass ?? 'stock';
   const config = assetClass === 'crypto' ? CRYPTO_CONFIG : BOT_CONFIG;
   const email = assetClass === 'crypto' ? CRYPTO_BOT_EMAIL : STOCK_BOT_EMAIL;
-  const meetsMinConfidence = (c?: string | null) => confValue(c) >= confValue(config.minBuyConfidence);
+  const meetsMinConfidence = (c?: string | null) => meetsMin(c, config.minBuyConfidence);
   const defaultBatch = assetClass === 'crypto' ? 6 : 25;
   const batchSize = opts.batchSize ?? Number(process.env.AUTOTRADE_BATCH ?? defaultBatch);
 
@@ -174,11 +174,8 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   for (const h of holdings) {
     const sig = cacheMap.get(h.ticker);
     const p = price(h.ticker) || h.buy_price;
-    const plPct = h.buy_price > 0 ? ((p - h.buy_price) / h.buy_price) * 100 : 0;
-    let why: string | null = null;
-    if (sig?.verdict === 'SELL') why = 'SELL signal';
-    else if (plPct <= config.stopLossPct) why = `stop-loss (${config.stopLossPct}%)`;
-    else if (plPct >= config.takeProfitPct) why = `take-profit (+${config.takeProfitPct}%)`;
+    const pl = pnlPct(p, h.buy_price);
+    const why = exitReason(sig?.verdict, pl, config);
     if (!why) continue;
     const proceeds = h.qty * p;
     cash += proceeds;
@@ -187,7 +184,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     await logTrade(admin, botId, h.ticker, 'SELL', h.qty, p, h.company_name);
     sellActions.push({
       kind: 'EXIT', ticker: display(h.ticker), shares: h.qty, pesos: proceeds,
-      reason: `${why} — sold all ${h.qty} unit(s) at ₱${p.toFixed(2)} (${plPct >= 0 ? '+' : ''}${plPct.toFixed(0)}% vs cost).`,
+      reason: `${why} — sold all ${h.qty} unit(s) at ₱${p.toFixed(2)} (${pl >= 0 ? '+' : ''}${pl.toFixed(0)}% vs cost).`,
     });
   }
 
@@ -224,8 +221,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
       cash -= cost;
       const ex = byTicker.get(a.ticker);
       if (ex) {
-        const newQty = ex.qty + a.shares;
-        const newAvg = (ex.qty * ex.buy_price + cost) / newQty;
+        const { qty: newQty, avgCost: newAvg } = addToPosition(ex.qty, ex.buy_price, a.shares, p);
         await admin.from('holdings').update({ qty: newQty, buy_price: newAvg }).eq('user_id', botId).eq('ticker', a.ticker);
         ex.qty = newQty; ex.buy_price = newAvg;
       } else {
@@ -253,7 +249,11 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     }
   }
 
-  const actions = [...sellActions, ...advice.actions.filter((a) => a.kind !== 'EXIT')];
+  // Advisor BUY/TRIM reasons say "share(s)"; for crypto, read "unit(s)".
+  const advActions = advice.actions
+    .filter((a) => a.kind !== 'EXIT')
+    .map((a) => (assetClass === 'crypto' ? { ...a, reason: a.reason.replace(/share\(s\)/g, 'unit(s)') } : a));
+  const actions = [...sellActions, ...advActions];
 
   // --- Persist cash, snapshot equity ---
   await admin.from('portfolio_cash').upsert({ user_id: botId, cash, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
