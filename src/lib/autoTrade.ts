@@ -47,6 +47,13 @@ export const CRYPTO_CONFIG = {
   minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(),
 };
 
+// Trading costs, folded into the executed price so ALL P/L math (equity, realized,
+// win-rate replays) reflects them automatically — no fake, cost-free profits.
+// PSE round-trip is ~1.2% (buy ~0.295%; sell ~0.875% incl. the 0.6% stock txn tax).
+// Crypto ~0.25% per side (typical exchange taker fee). Override via env.
+export const STOCK_FEES = { buyPct: Number(process.env.BOT_STOCK_BUY_FEE ?? 0.00295), sellPct: Number(process.env.BOT_STOCK_SELL_FEE ?? 0.00875) };
+export const CRYPTO_FEES = { buyPct: Number(process.env.BOT_CRYPTO_BUY_FEE ?? 0.0025), sellPct: Number(process.env.BOT_CRYPTO_SELL_FEE ?? 0.0025) };
+
 
 export interface AutoTradeResult {
   ok: boolean;
@@ -63,6 +70,7 @@ export interface AutoTradeResult {
   actions: { kind: string; ticker?: string; shares?: number; pesos?: number; reason: string }[];
   holdings: { ticker: string; qty: number; avgCost: number; price: number; value: number }[];
   config: typeof BOT_CONFIG;
+  fees: typeof STOCK_FEES;
 }
 
 export interface AutoTradeOptions {
@@ -112,6 +120,7 @@ async function logTrade(
 export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTradeResult> {
   const assetClass: AssetClass = opts.assetClass ?? 'stock';
   const config = assetClass === 'crypto' ? CRYPTO_CONFIG : BOT_CONFIG;
+  const fees = assetClass === 'crypto' ? CRYPTO_FEES : STOCK_FEES;
   const email = assetClass === 'crypto' ? CRYPTO_BOT_EMAIL : STOCK_BOT_EMAIL;
   const meetsMinConfidence = (c?: string | null) => meetsMin(c, config.minBuyConfidence);
   const defaultBatch = assetClass === 'crypto' ? 6 : 25;
@@ -177,11 +186,12 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     const pl = pnlPct(p, h.buy_price);
     const why = exitReason(sig?.verdict, pl, config);
     if (!why) continue;
-    const proceeds = h.qty * p;
+    const net = p * (1 - fees.sellPct); // price received after selling fee
+    const proceeds = h.qty * net;
     cash += proceeds;
     await admin.from('holdings').delete().eq('user_id', botId).eq('ticker', h.ticker);
     byTicker.delete(h.ticker);
-    await logTrade(admin, botId, h.ticker, 'SELL', h.qty, p, h.company_name);
+    await logTrade(admin, botId, h.ticker, 'SELL', h.qty, net, h.company_name);
     sellActions.push({
       kind: 'EXIT', ticker: display(h.ticker), shares: h.qty, pesos: proceeds,
       reason: `${why} — sold all ${h.qty} unit(s) at ₱${p.toFixed(2)} (${pl >= 0 ? '+' : ''}${pl.toFixed(0)}% vs cost).`,
@@ -215,27 +225,32 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
 
   for (const a of advice.actions) {
     if (a.kind === 'BUY' && a.ticker && a.shares) {
-      const p = price(a.ticker);
-      const cost = a.shares * p;
-      if (p <= 0 || cost > cash + 1e-6) continue;
+      const mkt = price(a.ticker);
+      if (mkt <= 0) continue;
+      const effPrice = mkt * (1 + fees.buyPct); // cost basis includes the buying fee
+      let shares = a.shares;
+      const affordable = Math.floor((cash + 1e-6) / effPrice);
+      if (affordable < shares) shares = affordable; // fee may shave the last unit
+      if (shares < 1) continue;
+      const cost = shares * effPrice;
       cash -= cost;
       const ex = byTicker.get(a.ticker);
       if (ex) {
-        const { qty: newQty, avgCost: newAvg } = addToPosition(ex.qty, ex.buy_price, a.shares, p);
+        const { qty: newQty, avgCost: newAvg } = addToPosition(ex.qty, ex.buy_price, shares, effPrice);
         await admin.from('holdings').update({ qty: newQty, buy_price: newAvg }).eq('user_id', botId).eq('ticker', a.ticker);
         ex.qty = newQty; ex.buy_price = newAvg;
       } else {
         const name = uni.get(a.ticker)?.name ?? display(a.ticker);
-        await admin.from('holdings').insert({ user_id: botId, ticker: a.ticker, company_name: name, qty: a.shares, buy_price: p, buy_date: today() });
-        byTicker.set(a.ticker, { ticker: a.ticker, qty: a.shares, buy_price: p, company_name: name });
+        await admin.from('holdings').insert({ user_id: botId, ticker: a.ticker, company_name: name, qty: shares, buy_price: effPrice, buy_date: today() });
+        byTicker.set(a.ticker, { ticker: a.ticker, qty: shares, buy_price: effPrice, company_name: name });
       }
-      await logTrade(admin, botId, a.ticker, 'BUY', a.shares, p, uni.get(a.ticker)?.name);
-      a.ticker = display(a.ticker);
+      await logTrade(admin, botId, a.ticker, 'BUY', shares, effPrice, uni.get(a.ticker)?.name);
+      a.ticker = display(a.ticker); a.shares = shares; a.pesos = cost;
     } else if (a.kind === 'TRIM' && a.ticker && a.shares) {
       const ex = byTicker.get(a.ticker);
       if (!ex) continue;
-      const p = price(a.ticker) || ex.buy_price;
-      cash += a.shares * p;
+      const net = (price(a.ticker) || ex.buy_price) * (1 - fees.sellPct);
+      cash += a.shares * net;
       const newQty = ex.qty - a.shares;
       if (newQty <= 0.0001) {
         await admin.from('holdings').delete().eq('user_id', botId).eq('ticker', a.ticker);
@@ -244,7 +259,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
         await admin.from('holdings').update({ qty: newQty }).eq('user_id', botId).eq('ticker', a.ticker);
         ex.qty = newQty;
       }
-      await logTrade(admin, botId, a.ticker, 'SELL', a.shares, p, ex.company_name);
+      await logTrade(admin, botId, a.ticker, 'SELL', a.shares, net, ex.company_name);
       a.ticker = display(a.ticker);
     }
   }
@@ -273,7 +288,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     universe: universe.length, signalsComputed, buyCandidates,
     cashBefore, cashAfter: cash, equity,
     pnlPct: ((equity - STARTING_CASH) / STARTING_CASH) * 100,
-    actions, holdings: finalHoldings, config,
+    actions, holdings: finalHoldings, config, fees,
   };
 }
 
@@ -301,6 +316,7 @@ export async function getBotState(assetClass: AssetClass = 'stock') {
     pnlPct: ((equity - STARTING_CASH) / STARTING_CASH) * 100,
     startingCash: STARTING_CASH,
     config: assetClass === 'crypto' ? CRYPTO_CONFIG : BOT_CONFIG,
+    fees: assetClass === 'crypto' ? CRYPTO_FEES : STOCK_FEES,
     equityCurve: (snaps ?? []).map((s: any) => ({ date: s.snapshot_date, value: Number(s.total_value) })),
     recentTrades: (trades ?? []).map((t: any) => ({ ...t, ticker: display(t.ticker) })),
   };
