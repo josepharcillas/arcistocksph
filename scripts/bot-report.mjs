@@ -20,13 +20,21 @@ const RISK = CRYPTO ? {
   maxWeightPct: Number(process.env.BOT_CRYPTO_MAX_WEIGHT_PCT ?? 20),
   riskPerTradePct: Number(process.env.BOT_CRYPTO_RISK_PCT ?? 1),
   stopLossPct: Number(process.env.BOT_CRYPTO_STOP_LOSS_PCT ?? -15),
-  takeProfitPct: Number(process.env.BOT_CRYPTO_TAKE_PROFIT_PCT ?? 35),
+  trailPct: Number(process.env.BOT_CRYPTO_TRAIL_PCT ?? 20),
+  minHoldDays: Number(process.env.BOT_CRYPTO_MIN_HOLD_DAYS ?? 5),
+  cooldownDays: Number(process.env.BOT_CRYPTO_COOLDOWN_DAYS ?? 5),
+  maxBuysPerDay: Number(process.env.BOT_CRYPTO_MAX_BUYS_PER_DAY ?? 2),
+  drawdownHaltPct: Number(process.env.BOT_CRYPTO_DRAWDOWN_HALT_PCT ?? 15),
   minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(),
 } : {
   maxWeightPct: Number(process.env.BOT_MAX_WEIGHT_PCT ?? 15),
   riskPerTradePct: Number(process.env.BOT_RISK_PCT ?? 1),
   stopLossPct: Number(process.env.BOT_STOP_LOSS_PCT ?? -8),
-  takeProfitPct: Number(process.env.BOT_TAKE_PROFIT_PCT ?? 20),
+  trailPct: Number(process.env.BOT_TRAIL_PCT ?? 10),
+  minHoldDays: Number(process.env.BOT_MIN_HOLD_DAYS ?? 5),
+  cooldownDays: Number(process.env.BOT_COOLDOWN_DAYS ?? 5),
+  maxBuysPerDay: Number(process.env.BOT_MAX_BUYS_PER_DAY ?? 2),
+  drawdownHaltPct: Number(process.env.BOT_DRAWDOWN_HALT_PCT ?? 10),
   minBuyConfidence: (process.env.BOT_MIN_CONFIDENCE ?? 'HIGH').toUpperCase(),
 };
 
@@ -99,12 +107,17 @@ console.log('    ─────────────────  ' + padL('
 console.log('    Total equity       ' + padL(peso(equity), 16));
 console.log('    Total P/L          ' + padL(peso(totalPl), 16) + '   (' + pct(totalPlPct) + ')');
 
-console.log('\n  RISK SETTINGS (capital protection)');
+console.log('\n  RISK & DISCIPLINE SETTINGS');
 console.log('    Stop-loss (auto-sell)    ' + padL(RISK.stopLossPct + '%', 8));
-console.log('    Take-profit (auto-sell)  ' + padL('+' + RISK.takeProfitPct + '%', 8));
-console.log('    Max per stock            ' + padL(RISK.maxWeightPct + '%', 8));
+console.log('    Trailing stop off peak   ' + padL('-' + RISK.trailPct + '%', 8) + '   (winners run, no fixed take-profit)');
+console.log('    Max per position         ' + padL(RISK.maxWeightPct + '%', 8));
 console.log('    Risk per trade           ' + padL(RISK.riskPerTradePct + '%', 8));
 console.log('    Min BUY confidence       ' + padL(RISK.minBuyConfidence, 8));
+console.log('    Trend filter             ' + padL('SMA200', 8) + '   (only buy above the 200-day average)');
+console.log('    Signal confirmation      ' + padL('24h+', 8) + '   (verdict must persist across recomputes)');
+console.log('    Min hold / cooldown      ' + padL(RISK.minHoldDays + 'd / ' + RISK.cooldownDays + 'd', 8));
+console.log('    Max buys per day         ' + padL(RISK.maxBuysPerDay, 8));
+console.log('    Drawdown halt            ' + padL('-' + RISK.drawdownHaltPct + '%', 8) + '   (pause buying below peak equity)');
 
 // Decision accuracy: replay the trade log oldest-first, computing realized P/L on
 // every SELL (vs running average cost) → win rate = how often the bot was right.

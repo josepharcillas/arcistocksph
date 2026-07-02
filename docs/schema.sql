@@ -49,6 +49,7 @@ create table holdings (
   qty numeric not null check (qty > 0),
   buy_price numeric not null check (buy_price > 0),
   buy_date date not null default current_date,
+  peak_price numeric, -- highest price seen since entry (auto-trade bot trailing stop)
   notes text,
   created_at timestamptz default now()
 );
@@ -158,6 +159,7 @@ create table signal_cache (
   target_price numeric,
   stop_loss numeric,
   provider text,
+  above_sma200 boolean, -- price > 200-day SMA at signal time (bot trend filter)
   computed_at timestamptz default now()
 );
 -- No RLS — signal cache is public read, server-only write

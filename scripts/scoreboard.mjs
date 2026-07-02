@@ -104,21 +104,24 @@ async function stockBasketReturn(sp) {
 }
 
 const [sp, cp] = await Promise.all([stockPrices(), cryptoPrices()]);
-const [stock, crypto] = await Promise.all([
+const merged = new Map([...sp, ...cp]); // DCA bot holds both asset types
+const [stock, crypto, dca] = await Promise.all([
   summarize('bot@arcistocks.local', sp),
   summarize('crypto-bot@arcistocks.local', cp),
+  summarize('dca-bot@arcistocks.local', merged),
 ]);
 const [btcBench, stockBench] = await Promise.all([
   btcReturnSince(crypto?.startDate),
   stockBasketReturn(sp),
 ]);
 
-const row = (label, fn) => '  ' + String(label).padEnd(20) + String(stock ? fn(stock) : '—').padStart(16) + String(crypto ? fn(crypto) : '—').padStart(16);
-const line = '─'.repeat(56);
+const cols = [stock, crypto, dca];
+const row = (label, fn) => '  ' + String(label).padEnd(18) + cols.map((c) => String(c ? fn(c) : '—').padStart(14)).join('');
+const line = '─'.repeat(62);
 console.log('\n' + line);
 console.log('  🏆 ARCISTOCKS BOT SCOREBOARD   ' + new Date().toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' }));
 console.log(line);
-console.log('  ' + ''.padEnd(20) + 'STOCKS'.padStart(16) + 'CRYPTO'.padStart(16));
+console.log('  ' + ''.padEnd(18) + 'AI STOCKS'.padStart(14) + 'AI CRYPTO'.padStart(14) + 'DCA 🐢'.padStart(14));
 console.log(line);
 console.log(row('Equity', (s) => peso(s.equity)));
 console.log(row('Bot return', (s) => pct(s.pnlPct)));
@@ -128,10 +131,12 @@ console.log(row('Trades', (s) => s.trades));
 console.log(row('Win rate', (s) => (s.winRate == null ? '—' : s.winRate.toFixed(0) + '%')));
 console.log(row('Realized P/L', (s) => peso(s.realized)));
 console.log(line);
-console.log('  BUY & HOLD BENCHMARK (does the bot beat just holding?)');
-console.log('  ' + 'Benchmark'.padEnd(20) + ('PSEi-30 ' + pct(stockBench.ret)).padStart(16) + ('BTC ' + pct(btcBench)).padStart(16));
+console.log('  BUY & HOLD BENCHMARK (do the bots beat just holding?)');
+console.log('  ' + 'Benchmark'.padEnd(18) + ('PSEi-30 ' + pct(stockBench.ret)).padStart(14) + ('BTC ' + pct(btcBench)).padStart(14));
 const alpha = (botPnl, bench) => (botPnl == null || bench == null) ? '—' : pct(botPnl - bench);
-console.log('  ' + 'Bot vs benchmark'.padEnd(20) + String(stock ? alpha(stock.pnlPct, stockBench.ret) : '—').padStart(16) + String(crypto ? alpha(crypto.pnlPct, btcBench) : '—').padStart(16));
+console.log('  ' + 'Bot vs benchmark'.padEnd(18) + String(stock ? alpha(stock.pnlPct, stockBench.ret) : '—').padStart(14) + String(crypto ? alpha(crypto.pnlPct, btcBench) : '—').padStart(14));
 console.log(line);
-console.log('  Trading fees are modeled (PSE ~1.2% round-trip, crypto ~0.5%).');
+console.log('  Fees modeled: PSE ~0.7% round-trip (post-CMEPA), crypto ~0.5%.');
+console.log('  DCA bot: weekly buys of dividend blue chips + BTC; dividends NOT');
+console.log('  modeled (no data feed), so its real-world return would be higher.');
 console.log('  Not financial advice — paper-trading simulation only.\n');

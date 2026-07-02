@@ -29,10 +29,14 @@ export async function getOrComputeCryptoSignal(
   const data = await getCryptoData(coinId, symbol, name);
   const result = await analyzeStock(data);
 
+  const t = data.technicals;
+  const aboveSma200 = t && t.sma200 > 0 ? t.currentPrice > t.sma200 : null;
+
   await admin.from('signal_cache').upsert({
     ticker: cacheTicker,
     verdict: result.verdict, confidence: result.confidence, rationale: result.rationale,
     target_price: result.targetPrice, stop_loss: result.stopLoss, provider: result.provider,
+    above_sma200: aboveSma200,
     computed_at: new Date().toISOString(),
   });
 

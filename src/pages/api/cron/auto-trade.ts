@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { runAutoTrade, getBotState, type AssetClass } from '../../../lib/autoTrade';
+import { runDcaBot, getDcaState } from '../../../lib/dcaBot';
 
 const asAsset = (v: string | null): AssetClass => (v === 'crypto' ? 'crypto' : 'stock');
 
@@ -26,6 +27,7 @@ export const POST: APIRoute = async ({ request, url }) => {
   if (!env('PUSH_NOTIFY_SECRET')) return json({ error: 'PUSH_NOTIFY_SECRET not configured' }, 500);
   if (!authed(request)) return json({ error: 'Unauthorized' }, 401);
   try {
+    if (url.searchParams.get('asset') === 'dca') return json(await runDcaBot());
     const batch = Number(url.searchParams.get('batch') ?? '') || undefined;
     return json(await runAutoTrade({ assetClass: asAsset(url.searchParams.get('asset')), batchSize: batch }));
   } catch (err) {
@@ -37,6 +39,7 @@ export const GET: APIRoute = async ({ request, url }) => {
   if (!env('PUSH_NOTIFY_SECRET')) return json({ error: 'PUSH_NOTIFY_SECRET not configured' }, 500);
   if (!authed(request)) return json({ error: 'Unauthorized' }, 401);
   try {
+    if (url.searchParams.get('asset') === 'dca') return json(await getDcaState());
     return json(await getBotState(asAsset(url.searchParams.get('asset'))));
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : 'Unknown error' }, 500);

@@ -1,25 +1,24 @@
 import cron from 'node-cron';
 import { runAutoTrade } from './autoTrade';
+import { runDcaBot } from './dcaBot';
 import { writeDailyReport } from './scoreboard';
 
-// In-process scheduler: while the server is running, fire the auto-trade bot on a
-// cron with no external scheduler needed. Initialised once from middleware.
+// In-process scheduler: while the server is running, fire the bots on cron with
+// no external scheduler needed. Initialised once from middleware.
 //
-// Default cadence: EVERY 5 MINUTES across the whole PSE trading session,
-// 9:30am–3:30pm PHT, Mon–Fri — so the bot behaves like a trader watching the
-// monitor all day and acting on the app's live suggestions. PHT is UTC+8, so the
-// session 9:30am–3:30pm PHT = 01:30–07:30 UTC. node-cron times are set in UTC.
-// (Signals are still 4h-cached: the app's BUY/SELL "suggestions" refresh every 4h,
-// while these 5-min runs continuously react to live prices and deploy/free cash.)
+// Cadence follows the 2026-07-02 research (overtrading is the documented #1 bot
+// killer; trend systems checked less often beat daily-checked ones):
+//   STOCK AI bot  — twice per session: 9:45am + 3:00pm PHT, Mon–Fri
+//   CRYPTO AI bot — every 4 hours, 24/7 (matches the 4h signal cache)
+//   DCA bot       — weekly: Monday 10:15am PHT (fixed-schedule investing)
+// PHT = UTC+8; node-cron times below are UTC.
 //
-// Override with AUTOTRADE_CRON (one or more UTC cron exprs, ';'-separated), or set
-// DISABLE_BOT_SCHEDULER=1 to turn it off.
+// Override with AUTOTRADE_CRON (';'-separated UTC exprs), AUTOTRADE_CRYPTO_CRON,
+// DCA_CRON; or set DISABLE_BOT_SCHEDULER=1 to turn everything off.
 
-// Every 5 min, 9:30am–3:30pm PHT (Mon–Fri), expressed in UTC (PHT−8):
 const DEFAULT_CRONS = [
-  '30-55/5 1 * * 1-5', // 9:30–9:55am PHT
-  '*/5 2-6 * * 1-5',   // 10:00am–2:55pm PHT
-  '0-30/5 7 * * 1-5',  // 3:00–3:30pm PHT
+  '45 1 * * 1-5', // 9:45am PHT — after the open settles
+  '0 7 * * 1-5',  // 3:00pm PHT — before the close
 ];
 
 let started = false;
@@ -51,13 +50,29 @@ export function initScheduler(): void {
     scheduled.push(expr);
   }
 
-  // Crypto trades 24/7 — run it round the clock (default every 15 min). Lighter
-  // cadence than stocks to stay friendly to CoinGecko's free rate limits.
-  const cryptoExpr = process.env.AUTOTRADE_CRYPTO_CRON ?? import.meta.env?.AUTOTRADE_CRYPTO_CRON ?? '*/15 * * * *';
+  // Crypto trades 24/7 but on a calm cadence — every 4h, matching the signal
+  // cache, so it reacts to confirmed trends instead of every wobble.
+  const cryptoExpr = process.env.AUTOTRADE_CRYPTO_CRON ?? import.meta.env?.AUTOTRADE_CRYPTO_CRON ?? '0 */4 * * *';
   let cryptoScheduled = false;
   if (process.env.DISABLE_CRYPTO_BOT !== '1' && cron.validate(cryptoExpr)) {
     cron.schedule(cryptoExpr, run('crypto'), { timezone: 'Etc/UTC' });
     cryptoScheduled = true;
+  }
+
+  // DCA investor bot — weekly scheduled buys (Mon 10:15am PHT), never influenced
+  // by signals or price levels. The evidence-backed slow strategy.
+  const dcaExpr = process.env.DCA_CRON ?? import.meta.env?.DCA_CRON ?? '15 2 * * 1';
+  let dcaScheduled = false;
+  if (process.env.DISABLE_DCA_BOT !== '1' && cron.validate(dcaExpr)) {
+    cron.schedule(dcaExpr, async () => {
+      try {
+        const r = await runDcaBot();
+        console.log(`[dca-bot] ${r.actions.length} action(s) · equity ₱${r.equity.toFixed(2)} (${r.pnlPct >= 0 ? '+' : ''}${r.pnlPct.toFixed(2)}%)`);
+      } catch (err) {
+        console.warn('[dca-bot] run failed:', err instanceof Error ? err.message : err);
+      }
+    }, { timezone: 'Etc/UTC' });
+    dcaScheduled = true;
   }
 
   // Daily report: log + save a both-bots scoreboard once a day after PSE close
@@ -75,7 +90,8 @@ export function initScheduler(): void {
     started = false;
     return;
   }
-  console.log(`[scheduler] STOCK bot (UTC): ${scheduled.map((e) => `"${e}"`).join(', ')} — every 5 min, 9:30am–3:30pm PHT, Mon–Fri`);
-  if (cryptoScheduled) console.log(`[scheduler] CRYPTO bot (UTC): "${cryptoExpr}" — 24/7`);
+  console.log(`[scheduler] STOCK AI bot (UTC): ${scheduled.map((e) => `"${e}"`).join(', ')} — 9:45am + 3:00pm PHT, Mon–Fri`);
+  if (cryptoScheduled) console.log(`[scheduler] CRYPTO AI bot (UTC): "${cryptoExpr}" — every 4h, 24/7`);
+  if (dcaScheduled) console.log(`[scheduler] DCA bot (UTC): "${dcaExpr}" — weekly, Mon 10:15am PHT`);
   if (reportScheduled) console.log(`[scheduler] DAILY report (UTC): "${reportExpr}" — logs + saves ./reports`);
 }

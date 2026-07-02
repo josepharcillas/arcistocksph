@@ -35,6 +35,11 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
   const stockData = await getStockData(sym, companyName ?? sym);
   const result = await analyzeStock(stockData);
 
+  // Trend flag for the bot's 200-day filter: only meaningful when we actually
+  // have a long-enough history (sma200 > 0); otherwise unknown (null).
+  const t = stockData.technicals;
+  const aboveSma200 = t && t.sma200 > 0 ? t.currentPrice > t.sma200 : null;
+
   await admin.from('signal_cache').upsert({
     ticker: sym,
     verdict: result.verdict,
@@ -43,6 +48,7 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
     target_price: result.targetPrice,
     stop_loss: result.stopLoss,
     provider: result.provider,
+    above_sma200: aboveSma200,
     computed_at: new Date().toISOString(),
   });
 

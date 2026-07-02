@@ -17,7 +17,10 @@ import { fetchTopCryptoQuotes, CRYPTO_PREFIX } from './market/crypto';
 import { getOrComputeSignal } from './signals';
 import { getOrComputeCryptoSignal } from './cryptoSignals';
 import { computeAdvice, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition } from './advisor';
-import { meetsMinConfidence as meetsMin, pnlPct, exitReason, addToPosition } from './botLogic';
+import {
+  meetsMinConfidence as meetsMin, pnlPct, exitReason, addToPosition,
+  isConfirmed, holdElapsed, inCooldown, trailingStopHit, drawdownHalted, type SignalRecord,
+} from './botLogic';
 
 export type AssetClass = 'stock' | 'crypto';
 
@@ -27,31 +30,42 @@ const FRESH_MS = 4 * 60 * 60 * 1000; // mirrors signal_cache TTL
 const STOCK_BOT_EMAIL = process.env.BOT_EMAIL ?? 'bot@arcistocks.local';
 const CRYPTO_BOT_EMAIL = process.env.CRYPTO_BOT_EMAIL ?? 'crypto-bot@arcistocks.local';
 
-// Capital-protection risk config per asset (override via env). Defensive: cap each
-// position, risk little per trade, auto stop-loss + take-profit, strongest BUYs only.
-// Crypto runs wider stops/targets because it's far more volatile than PSE stocks.
+// Risk + discipline config per asset (override via env). The discipline layer is
+// research-backed anti-churn (see 2026-07-02 agent reports): 200-day trend filter,
+// signal confirmation across recomputes, minimum hold, re-entry cooldown, TRAILING
+// stop instead of a fixed take-profit (let winners run), max buys/day, and a
+// drawdown circuit breaker. Crypto runs wider stops because it's far more volatile.
 export const BOT_CONFIG = {
   maxWeightPct: Number(process.env.BOT_MAX_WEIGHT_PCT ?? 15),
   riskPerTradePct: Number(process.env.BOT_RISK_PCT ?? 1),
   stopLossPct: Number(process.env.BOT_STOP_LOSS_PCT ?? -8),
-  takeProfitPct: Number(process.env.BOT_TAKE_PROFIT_PCT ?? 20),
+  trailPct: Number(process.env.BOT_TRAIL_PCT ?? 10),            // trail exit % off peak
+  minHoldDays: Number(process.env.BOT_MIN_HOLD_DAYS ?? 5),      // signal exits blocked before this
+  cooldownDays: Number(process.env.BOT_COOLDOWN_DAYS ?? 5),     // no re-buy after selling
+  maxBuysPerDay: Number(process.env.BOT_MAX_BUYS_PER_DAY ?? 2),
+  drawdownHaltPct: Number(process.env.BOT_DRAWDOWN_HALT_PCT ?? 10), // halt buys below peak equity
   minBuyConfidence: (process.env.BOT_MIN_CONFIDENCE ?? 'HIGH').toUpperCase(),
 };
 export const CRYPTO_CONFIG = {
   maxWeightPct: Number(process.env.BOT_CRYPTO_MAX_WEIGHT_PCT ?? 20),
   riskPerTradePct: Number(process.env.BOT_CRYPTO_RISK_PCT ?? 1),
   stopLossPct: Number(process.env.BOT_CRYPTO_STOP_LOSS_PCT ?? -15),
-  takeProfitPct: Number(process.env.BOT_CRYPTO_TAKE_PROFIT_PCT ?? 35),
+  trailPct: Number(process.env.BOT_CRYPTO_TRAIL_PCT ?? 20),
+  minHoldDays: Number(process.env.BOT_CRYPTO_MIN_HOLD_DAYS ?? 5),
+  cooldownDays: Number(process.env.BOT_CRYPTO_COOLDOWN_DAYS ?? 5),
+  maxBuysPerDay: Number(process.env.BOT_CRYPTO_MAX_BUYS_PER_DAY ?? 2),
+  drawdownHaltPct: Number(process.env.BOT_CRYPTO_DRAWDOWN_HALT_PCT ?? 15),
   // MEDIUM (not HIGH): the AI almost never rates crypto HIGH, so HIGH-only left the
-  // bot inert (0 trades). MEDIUM lets it actually participate; the -15% stop still caps risk.
+  // bot inert (0 trades). MEDIUM lets it participate; the -15% stop still caps risk.
   minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(),
 };
 
 // Trading costs, folded into the executed price so ALL P/L math (equity, realized,
 // win-rate replays) reflects them automatically — no fake, cost-free profits.
-// PSE round-trip is ~1.2% (buy ~0.295%; sell ~0.875% incl. the 0.6% stock txn tax).
+// PSE round-trip ≈ 0.70% since July 2025 (CMEPA cut the stock txn tax 0.6%→0.1%):
+// buy ≈ 0.295%, sell ≈ 0.395% (commission+VAT+PSE/SCCP fees+0.1% STT).
 // Crypto ~0.25% per side (typical exchange taker fee). Override via env.
-export const STOCK_FEES = { buyPct: Number(process.env.BOT_STOCK_BUY_FEE ?? 0.00295), sellPct: Number(process.env.BOT_STOCK_SELL_FEE ?? 0.00875) };
+export const STOCK_FEES = { buyPct: Number(process.env.BOT_STOCK_BUY_FEE ?? 0.00295), sellPct: Number(process.env.BOT_STOCK_SELL_FEE ?? 0.00395) };
 export const CRYPTO_FEES = { buyPct: Number(process.env.BOT_CRYPTO_BUY_FEE ?? 0.0025), sellPct: Number(process.env.BOT_CRYPTO_SELL_FEE ?? 0.0025) };
 
 
@@ -129,17 +143,35 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   const admin = createSupabaseAdmin();
   const botId = await resolveBotUserId(admin, email);
 
-  // --- Load bot state ---
-  const [{ data: holdingsRows }, { data: cashRow }] = await Promise.all([
-    admin.from('holdings').select('ticker, qty, buy_price, company_name').eq('user_id', botId),
+  // --- Load bot state (+ data the discipline rules need) ---
+  const cooldownSince = new Date(Date.now() - config.cooldownDays * 86400000).toISOString();
+  const [{ data: holdingsRows }, { data: cashRow }, { data: recentTrades }, { data: peakSnap }] = await Promise.all([
+    admin.from('holdings').select('ticker, qty, buy_price, buy_date, peak_price, company_name').eq('user_id', botId),
     admin.from('portfolio_cash').select('cash').eq('user_id', botId).maybeSingle(),
+    admin.from('paper_trades').select('ticker, action, traded_at').eq('user_id', botId).gte('traded_at', cooldownSince),
+    admin.from('balance_snapshots').select('total_value').eq('user_id', botId).order('total_value', { ascending: false }).limit(1),
   ]);
   const holdings = (holdingsRows ?? []).map((h: any) => ({
     ticker: h.ticker as string, qty: Number(h.qty), buy_price: Number(h.buy_price),
+    buy_date: (h.buy_date as string) ?? null, peak_price: h.peak_price != null ? Number(h.peak_price) : null,
     company_name: (h.company_name as string) ?? h.ticker,
   }));
   let cash = cashRow ? Number(cashRow.cash) : STARTING_CASH;
   const cashBefore = cash;
+
+  // Cooldown (last SELL per ticker) and today's buy count, from the bot's own log.
+  const lastSellAt = new Map<string, string>();
+  let buysToday = 0;
+  const dayStart = today();
+  for (const t of (recentTrades ?? []) as { ticker: string; action: string; traded_at: string }[]) {
+    if (t.action === 'SELL') {
+      const prev = lastSellAt.get(t.ticker);
+      if (!prev || t.traded_at > prev) lastSellAt.set(t.ticker, t.traded_at);
+    } else if (t.traded_at.slice(0, 10) === dayStart) {
+      buysToday++;
+    }
+  }
+  const peakEquity = peakSnap?.[0] ? Number(peakSnap[0].total_value) : STARTING_CASH;
 
   // --- Live universe (one bulk call) ---
   const universe = await loadUniverse(assetClass);
@@ -177,15 +209,49 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
 
   const byTicker = new Map(holdings.map((h) => [h.ticker, { ...h }]));
 
-  // --- SELL pass: protect capital + follow ArciStocks. Fully exit a holding if
-  //     the app rates it SELL, it hit the stop-loss, or it hit the take-profit. ---
+  // Signal-history for confirmation (newest-first per ticker): held tickers +
+  // anything carrying a fresh BUY. One query, grouped in memory.
+  const interesting = new Set<string>(holdings.map((h) => h.ticker));
+  for (const e of universe) {
+    const s = cacheMap.get(e.ticker);
+    if (s?.verdict === 'BUY' && meetsMinConfidence(s?.confidence)) interesting.add(e.ticker);
+  }
+  const histMap = new Map<string, SignalRecord[]>();
+  if (interesting.size > 0) {
+    const { data: histRows } = await admin
+      .from('signal_history').select('ticker, verdict, created_at')
+      .in('ticker', [...interesting]).order('created_at', { ascending: false }).limit(interesting.size * 10);
+    for (const r of (histRows ?? []) as { ticker: string; verdict: string; created_at: string }[]) {
+      const arr = histMap.get(r.ticker) ?? [];
+      if (arr.length < 10) arr.push({ verdict: r.verdict, created_at: r.created_at });
+      histMap.set(r.ticker, arr);
+    }
+  }
+  const confirmed = (t: string, verdict: string) => isConfirmed(histMap.get(t) ?? [], verdict);
+
+  // --- SELL pass (discipline order): hard stop-loss always fires; trailing stop
+  //     lets winners run then exits when they roll over; a SELL signal exits only
+  //     when it's CONFIRMED across recomputes AND the minimum hold has elapsed.
   const sellActions: AutoTradeResult['actions'] = [];
   for (const h of holdings) {
     const sig = cacheMap.get(h.ticker);
     const p = price(h.ticker) || h.buy_price;
     const pl = pnlPct(p, h.buy_price);
-    const why = exitReason(sig?.verdict, pl, config);
+
+    // Track the post-entry peak for the trailing stop (persist best-effort).
+    const peak = Math.max(h.peak_price ?? h.buy_price, p);
+    if (peak !== h.peak_price) {
+      await admin.from('holdings').update({ peak_price: peak }).eq('user_id', botId).eq('ticker', h.ticker);
+      h.peak_price = peak;
+      const held = byTicker.get(h.ticker); if (held) held.peak_price = peak;
+    }
+
+    const gatedVerdict = sig?.verdict === 'SELL' && holdElapsed(h.buy_date, config.minHoldDays) && confirmed(h.ticker, 'SELL')
+      ? 'SELL' : 'HOLD';
+    const why = exitReason(gatedVerdict, pl, { stopLossPct: config.stopLossPct, takeProfitPct: Infinity })
+      ?? trailingStopHit(p, peak, config.trailPct);
     if (!why) continue;
+
     const net = p * (1 - fees.sellPct); // price received after selling fee
     const proceeds = h.qty * net;
     cash += proceeds;
@@ -194,15 +260,31 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     await logTrade(admin, botId, h.ticker, 'SELL', h.qty, net, h.company_name);
     sellActions.push({
       kind: 'EXIT', ticker: display(h.ticker), shares: h.qty, pesos: proceeds,
-      reason: `${why} — sold all ${h.qty} unit(s) at ₱${p.toFixed(2)} (${pl >= 0 ? '+' : ''}${pl.toFixed(0)}% vs cost).`,
+      reason: `${why === 'SELL signal' ? 'confirmed SELL signal' : why} — sold all ${h.qty} unit(s) at ₱${p.toFixed(2)} (${pl >= 0 ? '+' : ''}${pl.toFixed(0)}% vs cost).`,
     });
   }
 
-  // --- BUY/TRIM pass via the risk-managed advisor ---
+  // --- BUY/TRIM pass via the risk-managed advisor, with the discipline gates:
+  //     trend filter (only buy above the 200-day SMA), confirmation (BUY must
+  //     persist across recomputes), re-entry cooldown, and a drawdown halt.
+  const equityNow = cash + [...byTicker.values()].reduce((s, h) => s + h.qty * (price(h.ticker) || h.buy_price), 0);
+  const halted = drawdownHalted(equityNow, peakEquity, config.drawdownHaltPct);
+
+  const buyable = (t: string): boolean => {
+    const s = cacheMap.get(t);
+    return !halted
+      && s?.verdict === 'BUY'
+      && meetsMinConfidence(s?.confidence)
+      && s?.above_sma200 === true      // 200-day trend filter (strict: unknown = no)
+      && confirmed(t, 'BUY')           // signal persisted across recomputes
+      && !inCooldown(lastSellAt.get(t), config.cooldownDays);
+  };
+
   const positions: AdvisorPosition[] = [];
   for (const h of byTicker.values()) {
     const s = cacheMap.get(h.ticker);
-    const verdict = s?.verdict === 'BUY' && !meetsMinConfidence(s?.confidence) ? 'HOLD' : (s?.verdict ?? null);
+    // Adds to an existing position face the same gates as new entries.
+    const verdict = s?.verdict === 'BUY' && !buyable(h.ticker) ? 'HOLD' : (s?.verdict ?? null);
     positions.push({
       ticker: h.ticker, shares: h.qty, avgCost: h.buy_price, price: price(h.ticker) || h.buy_price,
       verdict, confidence: s?.confidence ?? null, stopLoss: s?.stop_loss ?? null,
@@ -211,8 +293,8 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   let buyCandidates = 0;
   for (const e of universe) {
     if (byTicker.has(e.ticker)) continue;
-    const s = cacheMap.get(e.ticker);
-    if (s?.verdict === 'BUY' && meetsMinConfidence(s?.confidence) && e.price > 0) {
+    if (e.price > 0 && buyable(e.ticker)) {
+      const s = cacheMap.get(e.ticker);
       buyCandidates++;
       positions.push({ ticker: e.ticker, shares: 0, avgCost: 0, price: e.price, verdict: 'BUY', confidence: s.confidence ?? null, stopLoss: s.stop_loss ?? null });
     }
@@ -223,8 +305,11 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     maxWeightPct: config.maxWeightPct, riskPerTradePct: config.riskPerTradePct,
   });
 
+  let buysThisRun = 0;
   for (const a of advice.actions) {
     if (a.kind === 'BUY' && a.ticker && a.shares) {
+      // Turnover cap: a slow-growth bot trades a few times per WEEK, not per run.
+      if (buysToday + buysThisRun >= config.maxBuysPerDay) continue;
       const mkt = price(a.ticker);
       if (mkt <= 0) continue;
       const effPrice = mkt * (1 + fees.buyPct); // cost basis includes the buying fee
@@ -234,15 +319,17 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
       if (shares < 1) continue;
       const cost = shares * effPrice;
       cash -= cost;
+      buysThisRun++;
       const ex = byTicker.get(a.ticker);
       if (ex) {
         const { qty: newQty, avgCost: newAvg } = addToPosition(ex.qty, ex.buy_price, shares, effPrice);
-        await admin.from('holdings').update({ qty: newQty, buy_price: newAvg }).eq('user_id', botId).eq('ticker', a.ticker);
-        ex.qty = newQty; ex.buy_price = newAvg;
+        const newPeak = Math.max(ex.peak_price ?? ex.buy_price, effPrice);
+        await admin.from('holdings').update({ qty: newQty, buy_price: newAvg, peak_price: newPeak }).eq('user_id', botId).eq('ticker', a.ticker);
+        ex.qty = newQty; ex.buy_price = newAvg; ex.peak_price = newPeak;
       } else {
         const name = uni.get(a.ticker)?.name ?? display(a.ticker);
-        await admin.from('holdings').insert({ user_id: botId, ticker: a.ticker, company_name: name, qty: shares, buy_price: effPrice, buy_date: today() });
-        byTicker.set(a.ticker, { ticker: a.ticker, qty: shares, buy_price: effPrice, company_name: name });
+        await admin.from('holdings').insert({ user_id: botId, ticker: a.ticker, company_name: name, qty: shares, buy_price: effPrice, buy_date: today(), peak_price: effPrice });
+        byTicker.set(a.ticker, { ticker: a.ticker, qty: shares, buy_price: effPrice, buy_date: today(), peak_price: effPrice, company_name: name });
       }
       await logTrade(admin, botId, a.ticker, 'BUY', shares, effPrice, uni.get(a.ticker)?.name);
       a.ticker = display(a.ticker); a.shares = shares; a.pesos = cost;

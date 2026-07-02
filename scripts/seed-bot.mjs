@@ -15,6 +15,7 @@ const reset = process.argv.includes('--reset');
 const BOTS = [
   { email: 'bot@arcistocks.local', password: 'botbot123456', name: '🤖 AI Auto-Trader (Stocks)' },
   { email: 'crypto-bot@arcistocks.local', password: 'botbot123456', name: '🪙 AI Auto-Trader (Crypto)' },
+  { email: 'dca-bot@arcistocks.local', password: 'botbot123456', name: '🐢 DCA Investor Bot' },
 ];
 
 const admin = createClient(URL, SERVICE, { auth: { autoRefreshToken: false, persistSession: false } });
