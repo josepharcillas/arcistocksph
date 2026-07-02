@@ -22,7 +22,7 @@ export async function getOrComputeCryptoSignal(
     return {
       verdict: cached.verdict, confidence: cached.confidence, rationale: cached.rationale,
       targetPrice: cached.target_price, stopLoss: cached.stop_loss, provider: cached.provider,
-      analyzedAt: cached.computed_at, cached: true,
+      analyzedAt: cached.computed_at, cached: true, aboveSma200: cached.above_sma200 ?? null,
     };
   }
 
@@ -47,5 +47,5 @@ export async function getOrComputeCryptoSignal(
       .then(({ error }) => { if (error) console.warn('crypto signal_history insert failed:', error.message); });
   }
 
-  return { ...result, cached: false };
+  return { ...result, cached: false, aboveSma200 };
 }

@@ -179,20 +179,41 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   const price = (t: string) => uni.get(t)?.price ?? 0;
   const held = new Set(holdings.map((h) => h.ticker));
 
-  // --- Decide which tickers to (re)compute signals for: all held + rotating batch ---
+  // --- Decide which tickers to (re)compute signals for. Three tiers:
+  //     1. HELD — always re-checked, so exits fire.
+  //     2. WATCH — non-held tickers whose last signal was a qualifying BUY: these
+  //        must be re-analyzed every run to build the 24h confirmation streak
+  //        (a one-off scan can never confirm).
+  //     3. DISCOVERY — a RANDOM sample of the remaining stale universe. Random,
+  //        not first-N: at the slow cadence a fixed slice would re-scan the same
+  //        alphabetical head of the list forever and never see the rest.
   const { data: cacheRows } = await admin
-    .from('signal_cache').select('ticker, verdict, confidence, stop_loss, computed_at');
+    .from('signal_cache').select('ticker, verdict, confidence, stop_loss, above_sma200, computed_at');
   const cacheMap = new Map<string, any>((cacheRows ?? []).map((r: any) => [r.ticker, r]));
   const isFresh = (t: string) => {
     const c = cacheMap.get(t);
     return c && Date.now() - new Date(c.computed_at).getTime() < FRESH_MS;
   };
 
-  const newCandidates = universe
+  const watch = universe
     .map((e) => e.ticker)
-    .filter((t) => !held.has(t) && !isFresh(t))
-    .slice(0, batchSize);
-  const toCompute = [...new Set([...held, ...newCandidates])];
+    .filter((t) => {
+      if (held.has(t)) return false;
+      const s = cacheMap.get(t);
+      return s?.verdict === 'BUY' && meetsMin(s?.confidence, config.minBuyConfidence) && s?.above_sma200 !== false;
+    })
+    .slice(0, 15); // bound the AI budget spent tracking candidates
+  const watchSet = new Set(watch);
+
+  const pool = universe
+    .map((e) => e.ticker)
+    .filter((t) => !held.has(t) && !watchSet.has(t) && !isFresh(t));
+  for (let i = pool.length - 1; i > 0; i--) { // Fisher–Yates
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const newCandidates = pool.slice(0, batchSize);
+  const toCompute = [...new Set([...held, ...watch.filter((t) => !isFresh(t)), ...newCandidates])];
 
   let signalsComputed = 0;
   for (const t of toCompute) {
@@ -201,7 +222,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     try {
       const r = await computeSignalFor(assetClass, e);
       if (!r.cached) signalsComputed++;
-      cacheMap.set(t, { ticker: t, verdict: r.verdict, confidence: r.confidence, stop_loss: r.stopLoss, computed_at: r.analyzedAt });
+      cacheMap.set(t, { ticker: t, verdict: r.verdict, confidence: r.confidence, stop_loss: r.stopLoss, above_sma200: r.aboveSma200 ?? null, computed_at: r.analyzedAt });
     } catch (err) {
       console.warn('[auto-trade] signal failed for', t, err instanceof Error ? err.message : err);
     }

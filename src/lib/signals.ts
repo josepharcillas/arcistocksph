@@ -12,6 +12,7 @@ const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours — shared across users via 
 
 export interface SignalWithMeta extends StockAnalysisResult {
   cached: boolean;
+  aboveSma200?: boolean | null; // trend flag for the bot's 200-day filter
 }
 
 export async function getOrComputeSignal(ticker: string, companyName?: string): Promise<SignalWithMeta> {
@@ -29,6 +30,7 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
       provider: cached.provider,
       analyzedAt: cached.computed_at,
       cached: true,
+      aboveSma200: cached.above_sma200 ?? null,
     };
   }
 
@@ -69,5 +71,5 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
     );
   }
 
-  return { ...result, cached: false };
+  return { ...result, cached: false, aboveSma200 };
 }
