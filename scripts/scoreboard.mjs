@@ -35,7 +35,7 @@ async function stockPrices() {
 async function cryptoPrices() {
   const m = new Map();
   try {
-    const r = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=php&order=market_cap_desc&per_page=100&page=1', { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const r = await fetch('https://api.coingecko.com/api/v3/coins/markets?vs_currency=php&order=market_cap_desc&per_page=250&page=1', { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (r.ok) for (const c of await r.json()) m.set('X:' + String(c.symbol).toUpperCase(), c.current_price ?? 0);
   } catch { /* offline */ }
   return m;

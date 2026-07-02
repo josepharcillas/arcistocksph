@@ -110,7 +110,8 @@ async function resolveBotUserId(admin: ReturnType<typeof createSupabaseAdmin>, e
 
 async function loadUniverse(assetClass: AssetClass): Promise<UniverseEntry[]> {
   if (assetClass === 'crypto') {
-    const m = await fetchTopCryptoQuotes(Number(process.env.CRYPTO_UNIVERSE ?? 30));
+    // Whole active market: top 250 by cap with a liquidity floor (see crypto.ts).
+    const m = await fetchTopCryptoQuotes(Number(process.env.CRYPTO_UNIVERSE ?? 250));
     return [...m.values()].map((c) => ({ ticker: c.ticker, price: c.price, name: c.name, symbol: c.symbol, id: c.id }));
   }
   const m = await fetchAllQuotes();

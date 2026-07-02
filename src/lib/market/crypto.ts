@@ -36,27 +36,37 @@ export interface CryptoQuote {
 
 export const CRYPTO_PREFIX = 'X:';
 
-/** Top non-stablecoin coins by market cap, keyed by namespaced ticker ("X:BTC"). */
-export async function fetchTopCryptoQuotes(limit = 30): Promise<Map<string, CryptoQuote>> {
-  // Over-fetch so we still hit `limit` after dropping stablecoins.
-  const per = Math.min(100, limit + 20);
-  const url = `${BASE}/coins/markets?vs_currency=php&order=market_cap_desc&per_page=${per}&page=1&price_change_percentage=24h`;
-  const res = await cgFetch(url);
-  if (!res.ok) throw new Error(`CoinGecko markets error: ${res.status}`);
-  const rows = await res.json();
-  if (!Array.isArray(rows)) throw new Error('CoinGecko markets: unexpected response');
+// "Active" = big enough daily turnover to actually trade. Coins below this 24h
+// volume (in PHP) are illiquid junk where a paper fill at the quote is fiction.
+const MIN_VOLUME_PHP = Number(process.env.CRYPTO_MIN_VOLUME ?? 50_000_000); // ≈ $0.9M/day
 
+/** Active non-stablecoin coins by market cap, keyed by namespaced ticker ("X:BTC").
+ *  Pages through CoinGecko (250/page) up to `limit` coins. */
+export async function fetchTopCryptoQuotes(limit = 250): Promise<Map<string, CryptoQuote>> {
   const map = new Map<string, CryptoQuote>();
-  for (const r of rows) {
-    const symbol = String(r.symbol ?? '').toUpperCase();
-    if (!symbol || STABLE.has(symbol)) continue;
-    if (!(r.current_price > 0)) continue;
-    const ticker = CRYPTO_PREFIX + symbol;
-    map.set(ticker, {
-      ticker, symbol, name: r.name ?? symbol, id: r.id,
-      price: r.current_price, change1d: r.price_change_percentage_24h ?? 0,
-    });
-    if (map.size >= limit) break;
+  const maxPages = Math.min(4, Math.ceil((limit + 50) / 250)); // small over-fetch for filtered rows
+  for (let page = 1; page <= maxPages && map.size < limit; page++) {
+    const url = `${BASE}/coins/markets?vs_currency=php&order=market_cap_desc&per_page=250&page=${page}&price_change_percentage=24h`;
+    const res = await cgFetch(url);
+    if (!res.ok) {
+      if (map.size > 0) break; // keep what we have on a late-page failure
+      throw new Error(`CoinGecko markets error: ${res.status}`);
+    }
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    for (const r of rows) {
+      const symbol = String(r.symbol ?? '').toUpperCase();
+      if (!symbol || STABLE.has(symbol)) continue;
+      if (!(r.current_price > 0)) continue;
+      if (!(Number(r.total_volume ?? 0) >= MIN_VOLUME_PHP)) continue; // liquidity floor
+      const ticker = CRYPTO_PREFIX + symbol;
+      if (map.has(ticker)) continue; // duplicate symbols across coins — first (bigger cap) wins
+      map.set(ticker, {
+        ticker, symbol, name: r.name ?? symbol, id: r.id,
+        price: r.current_price, change1d: r.price_change_percentage_24h ?? 0,
+      });
+      if (map.size >= limit) break;
+    }
   }
   return map;
 }
