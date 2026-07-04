@@ -15,6 +15,7 @@ export interface AdvisorPosition {
   verdict: Verdict | null;
   confidence: Confidence | null;
   stopLoss?: number | null; // from the signal; enables risk-based sizing
+  isNew?: boolean;      // market-discovered opportunity (not held, not watchlisted)
 }
 
 export interface AdvisorConfig {
@@ -22,10 +23,11 @@ export interface AdvisorConfig {
   deepLossPct: number;    // P/L threshold (negative) at which a SELL triggers EXIT
   sizing: 'cap' | 'risk'; // how BUY size is computed
   riskPerTradePct: number; // % of equity risked to the stop-loss (risk mode)
+  maxPositions: number;   // no NEW entries once this many tickers are held
 }
 
 export const DEFAULT_ADVISOR_CONFIG: AdvisorConfig = {
-  maxWeightPct: 30, deepLossPct: -40, sizing: 'cap', riskPerTradePct: 2,
+  maxWeightPct: 30, deepLossPct: -40, sizing: 'cap', riskPerTradePct: 2, maxPositions: 10,
 };
 
 export type ActionKind = 'EXIT' | 'TRIM' | 'BUY' | 'HOLD_CASH';
@@ -110,8 +112,15 @@ export function computeAdvice(
     .filter((p) => p.verdict === 'BUY' && p.weightPct < config.maxWeightPct && !exited.has(p.ticker))
     .sort((a, b) => confRank(b.confidence) - confRank(a.confidence) || a.weightPct - b.weightPct);
 
+  // Position-count cap: adds to existing holdings are always allowed, but NEW
+  // entries stop once the book is already maxPositions tickers wide — an LLM
+  // given the whole market will otherwise "diversify" into correlation risk
+  // and fee bleed one plausible-sounding name at a time.
+  let openPositions = withWeight.filter((p) => p.shares > 0 && !exited.has(p.ticker)).length;
+
   for (const p of candidates) {
     if (available < p.price) continue;
+    if (p.shares <= 0 && openPositions >= config.maxPositions) continue;
     const capRoom = Math.max(0, (config.maxWeightPct / 100) * equity - p.value);
     const capShares = Math.floor(capRoom / p.price);
     const cashShares = Math.floor(available / p.price);
@@ -126,11 +135,13 @@ export function computeAdvice(
       const basis = usableStop
         ? `risk ${config.riskPerTradePct}% of equity to a ₱${p.stopLoss!.toFixed(2)} stop`
         : `under the ${config.maxWeightPct}% cap`;
+      const lead = p.isNew ? 'New opportunity from the market scan: ' : '';
       actions.push({
         kind: 'BUY', ticker: p.ticker, shares, pesos: cost,
-        reason: `${p.verdict}/${p.confidence ?? '—'} signal — add ${shares} share(s) for ₱${peso(cost)} (${basis}).`,
+        reason: `${lead}${p.verdict}/${p.confidence ?? '—'} signal — add ${shares} share(s) for ₱${peso(cost)} (${basis}).`,
       });
       available -= cost;
+      if (p.shares <= 0) openPositions++;
     }
   }
 

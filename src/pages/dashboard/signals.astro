@@ -2,15 +2,17 @@
 import DashboardLayout from '../../layouts/DashboardLayout.astro';
 import SignalsFeed from '../../components/signals/SignalsFeed';
 import SignalAccuracy from '../../components/signals/SignalAccuracy';
+import MarketMovers from '../../components/signals/MarketMovers';
 ---
 <DashboardLayout title="Signals">
   <div class="p-4 md:p-6">
     <div class="mb-6">
       <h1 class="text-2xl font-bold">AI Signals</h1>
-      <p class="text-slate-400 text-sm mt-0.5">Buy/Sell/Hold recommendations for your holdings</p>
+      <p class="text-slate-400 text-sm mt-0.5">Buy/Sell/Hold recommendations for your holdings — plus what's moving in the market</p>
     </div>
 
     <SignalAccuracy client:load />
+    <MarketMovers client:load />
     <SignalsFeed client:load />
 
     <p class="text-slate-600 text-xs mt-8 text-center">

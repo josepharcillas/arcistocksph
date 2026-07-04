@@ -23,11 +23,12 @@ export default function Advisor() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) { setError('Sign in to see your advisor.'); setLoading(false); return; }
 
-      const [{ data: holdings }, { data: cashRow }, { data: watch }, quoteRes] = await Promise.all([
+      const [{ data: holdings }, { data: cashRow }, { data: watch }, quoteRes, oppRes] = await Promise.all([
         supabase.from('holdings').select('ticker, qty, buy_price'),
         supabase.from('portfolio_cash').select('cash').eq('user_id', user.id).maybeSingle(),
         supabase.from('watchlist').select('ticker'),
         fetch('/api/stocks').then((r) => r.json()).catch(() => []),
+        fetch('/api/advisor/opportunities').then((r) => (r.ok ? r.json() : { candidates: [] })).catch(() => ({ candidates: [] })),
       ]);
 
       const cashVal = cashRow ? Number(cashRow.cash) : 0;
@@ -62,7 +63,19 @@ export default function Advisor() {
         ticker: t, shares: 0, avgCost: 0, price: priceMap[t] ?? 0, ...(await signalFor(t)),
       }))).then((ps) => ps.filter((p) => p.price > 0)); // skip unknown-price candidates
 
-      setAdvice(computeAdvice([...heldPositions, ...watchPositions], cashVal, { ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk' }));
+      // Market-scan opportunities (U-panel 2026-07-04): fresh cached BUYs from the
+      // whole liquid market, quality-gated server-side. Top 2 not already held or
+      // watchlisted become new-entry candidates — no extra AI calls (cache-only).
+      const watchSet = new Set(watchTickers);
+      const oppPositions: AdvisorPosition[] = ((oppRes?.candidates ?? []) as any[])
+        .filter((c) => !held.has(c.ticker) && !watchSet.has(c.ticker) && (priceMap[c.ticker] ?? 0) > 0)
+        .slice(0, 2)
+        .map((c) => ({
+          ticker: c.ticker, shares: 0, avgCost: 0, price: priceMap[c.ticker],
+          verdict: c.verdict, confidence: c.confidence, stopLoss: c.stopLoss ?? null, isNew: true,
+        }));
+
+      setAdvice(computeAdvice([...heldPositions, ...watchPositions, ...oppPositions], cashVal, { ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk' }));
       setLoadedAt(new Date());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not build your advice.');

@@ -144,3 +144,46 @@ describe('headlineSignature (U3)', () => {
     expect(headlineSignature(advice)).toBe('EXIT:DEAD:100');
   });
 });
+
+describe('maxPositions cap + market-scan opportunities', () => {
+  const heldBook = (n: number): AdvisorPosition[] =>
+    Array.from({ length: n }, (_, i) => pos({ ticker: `H${i}`, shares: 10, avgCost: 10, price: 10 }));
+
+  it('blocks NEW entries once the book is maxPositions wide', () => {
+    const positions = [
+      ...heldBook(10), // at the default cap of 10
+      pos({ ticker: 'NEWCO', shares: 0, avgCost: 0, price: 10, verdict: 'BUY', confidence: 'HIGH', isNew: true }),
+    ];
+    const advice = computeAdvice(positions, 5000);
+    expect(advice.actions.some((a) => a.kind === 'BUY' && a.ticker === 'NEWCO')).toBe(false);
+  });
+
+  it('still allows ADDING to an existing holding at the cap', () => {
+    const book = heldBook(10);
+    book[0] = { ...book[0], verdict: 'BUY', confidence: 'HIGH' };
+    const advice = computeAdvice(book, 5000);
+    expect(advice.actions.some((a) => a.kind === 'BUY' && a.ticker === 'H0')).toBe(true);
+  });
+
+  it('allows a new entry under the cap and labels market-scan finds', () => {
+    const positions = [
+      ...heldBook(2),
+      pos({ ticker: 'NEWCO', shares: 0, avgCost: 0, price: 10, verdict: 'BUY', confidence: 'HIGH', isNew: true }),
+    ];
+    const advice = computeAdvice(positions, 5000);
+    const buy = advice.actions.find((a) => a.kind === 'BUY' && a.ticker === 'NEWCO');
+    expect(buy).toBeDefined();
+    expect(buy!.reason).toMatch(/New opportunity from the market scan/);
+  });
+
+  it('counts multiple new entries against the cap within one run', () => {
+    const positions = [
+      ...heldBook(9), // one slot left
+      pos({ ticker: 'NEW1', shares: 0, avgCost: 0, price: 10, verdict: 'BUY', confidence: 'HIGH', isNew: true }),
+      pos({ ticker: 'NEW2', shares: 0, avgCost: 0, price: 10, verdict: 'BUY', confidence: 'HIGH', isNew: true }),
+    ];
+    const advice = computeAdvice(positions, 5000);
+    const newBuys = advice.actions.filter((a) => a.kind === 'BUY' && a.ticker?.startsWith('NEW'));
+    expect(newBuys).toHaveLength(1); // only the one free slot gets filled
+  });
+});
