@@ -19,8 +19,10 @@ import { getOrComputeCryptoSignal } from './cryptoSignals';
 import { computeAdvice, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition } from './advisor';
 import {
   meetsMinConfidence as meetsMin, pnlPct, exitReason, addToPosition,
-  isConfirmed, holdElapsed, inCooldown, trailingStopHit, drawdownHalted, type SignalRecord,
+  isConfirmed, holdElapsed, inCooldown, trailingStopHit, drawdownHalted,
+  aboveTurnoverFloor, pickDiscoveryBatch, type SignalRecord,
 } from './botLogic';
+import type { SignalLogContext } from './signals';
 
 export type AssetClass = 'stock' | 'crypto';
 
@@ -45,6 +47,10 @@ export const BOT_CONFIG = {
   maxBuysPerDay: Number(process.env.BOT_MAX_BUYS_PER_DAY ?? 2),
   drawdownHaltPct: Number(process.env.BOT_DRAWDOWN_HALT_PCT ?? 10), // halt buys below peak equity
   minBuyConfidence: (process.env.BOT_MIN_CONFIDENCE ?? 'HIGH').toUpperCase(),
+  // Liquidity floor for money decisions (₱ median daily value traded, ~20 sessions).
+  // At ~0.7% round-trip fees plus real slippage, sub-floor edge is unrecoverable —
+  // and a paper fill at a thin stock's stale quote is fiction anyway.
+  minTurnover: Number(process.env.STOCK_MIN_TURNOVER ?? 5_000_000),
 };
 export const CRYPTO_CONFIG = {
   maxWeightPct: Number(process.env.BOT_CRYPTO_MAX_WEIGHT_PCT ?? 20),
@@ -58,6 +64,7 @@ export const CRYPTO_CONFIG = {
   // MEDIUM (not HIGH): the AI almost never rates crypto HIGH, so HIGH-only left the
   // bot inert (0 trades). MEDIUM lets it participate; the -15% stop still caps risk.
   minBuyConfidence: (process.env.BOT_CRYPTO_MIN_CONFIDENCE ?? 'MEDIUM').toUpperCase(),
+  minTurnover: 0, // CoinGecko universe is already liquidity-floored (CRYPTO_MIN_VOLUME)
 };
 
 // Trading costs, folded into the executed price so ALL P/L math (equity, realized,
@@ -92,7 +99,7 @@ export interface AutoTradeOptions {
   batchSize?: number;
 }
 
-interface UniverseEntry { ticker: string; price: number; name: string; symbol: string; id?: string }
+interface UniverseEntry { ticker: string; price: number; name: string; symbol: string; id?: string; dayTurnover?: number }
 
 const today = () => new Date().toISOString().slice(0, 10);
 const display = (t: string) => t.replace(new RegExp('^' + CRYPTO_PREFIX), '');
@@ -115,12 +122,15 @@ async function loadUniverse(assetClass: AssetClass): Promise<UniverseEntry[]> {
     return [...m.values()].map((c) => ({ ticker: c.ticker, price: c.price, name: c.name, symbol: c.symbol, id: c.id }));
   }
   const m = await fetchAllQuotes();
-  return [...m.values()].filter((q) => q.price > 0).map((q) => ({ ticker: q.symbol, price: q.price, name: q.name, symbol: q.symbol }));
+  return [...m.values()].filter((q) => q.price > 0).map((q) => ({
+    ticker: q.symbol, price: q.price, name: q.name, symbol: q.symbol,
+    dayTurnover: q.price * (q.volume ?? 0), // today's peso turnover — the scan-allocation weight
+  }));
 }
 
-async function computeSignalFor(assetClass: AssetClass, e: UniverseEntry) {
-  if (assetClass === 'crypto') return getOrComputeCryptoSignal(e.ticker, e.id ?? e.symbol, e.symbol, e.name);
-  return getOrComputeSignal(e.ticker, e.name);
+async function computeSignalFor(assetClass: AssetClass, e: UniverseEntry, log: SignalLogContext) {
+  if (assetClass === 'crypto') return getOrComputeCryptoSignal(e.ticker, e.id ?? e.symbol, e.symbol, e.name, log);
+  return getOrComputeSignal(e.ticker, e.name, log);
 }
 
 async function logTrade(
@@ -185,15 +195,23 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   //     2. WATCH — non-held tickers whose last signal was a qualifying BUY: these
   //        must be re-analyzed every run to build the 24h confirmation streak
   //        (a one-off scan can never confirm).
-  //     3. DISCOVERY — a RANDOM sample of the remaining stale universe. Random,
-  //        not first-N: at the slow cadence a fixed slice would re-scan the same
-  //        alphabetical head of the list forever and never see the rest.
+  //     3. DISCOVERY — two measurable arms over the remaining stale universe:
+  //        turnover-WEIGHTED (scan budget follows where the market actually
+  //        trades) + a uniform-random CONTROL arm (unbiased sample for the
+  //        accuracy tracker; also audits below-floor names without ever
+  //        surfacing them — the buy gate still blocks those).
   const { data: cacheRows } = await admin
-    .from('signal_cache').select('ticker, verdict, confidence, stop_loss, above_sma200, computed_at');
+    .from('signal_cache').select('ticker, verdict, confidence, stop_loss, above_sma200, turnover20d, computed_at');
   const cacheMap = new Map<string, any>((cacheRows ?? []).map((r: any) => [r.ticker, r]));
   const isFresh = (t: string) => {
     const c = cacheMap.get(t);
     return c && Date.now() - new Date(c.computed_at).getTime() < FRESH_MS;
+  };
+  // Liquidity floor for money decisions, from the ticker's cached 20d median
+  // turnover. Strict like the SMA filter: unknown = no. Floor 0 disables (crypto).
+  const aboveFloor = (t: string) => {
+    const s = cacheMap.get(t);
+    return aboveTurnoverFloor(s?.turnover20d != null ? Number(s.turnover20d) : null, config.minTurnover);
   };
 
   const watch = universe
@@ -201,29 +219,34 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     .filter((t) => {
       if (held.has(t)) return false;
       const s = cacheMap.get(t);
-      return s?.verdict === 'BUY' && meetsMin(s?.confidence, config.minBuyConfidence) && s?.above_sma200 !== false;
+      return s?.verdict === 'BUY' && meetsMin(s?.confidence, config.minBuyConfidence)
+        && s?.above_sma200 !== false && aboveFloor(t); // don't spend budget tracking unbuyable names
     })
     .slice(0, 15); // bound the AI budget spent tracking candidates
   const watchSet = new Set(watch);
 
-  const pool = universe
-    .map((e) => e.ticker)
-    .filter((t) => !held.has(t) && !watchSet.has(t) && !isFresh(t));
-  for (let i = pool.length - 1; i > 0; i--) { // Fisher–Yates
-    const j = Math.floor(Math.random() * (i + 1));
-    [pool[i], pool[j]] = [pool[j], pool[i]];
-  }
-  const newCandidates = pool.slice(0, batchSize);
+  const pool = universe.filter((e) => !held.has(e.ticker) && !watchSet.has(e.ticker) && !isFresh(e.ticker));
+  const batch = pickDiscoveryBatch(pool, (e) => e.dayTurnover ?? 0, batchSize, config.minTurnover);
+  const armOf = new Map<string, SignalLogContext['arm']>();
+  for (const e of batch.weighted) armOf.set(e.ticker, 'weighted');
+  for (const e of batch.control) armOf.set(e.ticker, 'control');
+  const newCandidates = [...batch.weighted, ...batch.control].map((e) => e.ticker);
   const toCompute = [...new Set([...held, ...watch.filter((t) => !isFresh(t)), ...newCandidates])];
 
   let signalsComputed = 0;
   for (const t of toCompute) {
     const e = uni.get(t);
     if (!e) continue; // held item no longer in the universe (e.g. fell out of top-N) — keep cached
+    const log: SignalLogContext = held.has(t)
+      ? { source: 'held' }
+      : watchSet.has(t) ? { source: 'watch' } : { source: 'discovery', arm: armOf.get(t) ?? null };
     try {
-      const r = await computeSignalFor(assetClass, e);
+      const r = await computeSignalFor(assetClass, e, log);
       if (!r.cached) signalsComputed++;
-      cacheMap.set(t, { ticker: t, verdict: r.verdict, confidence: r.confidence, stop_loss: r.stopLoss, above_sma200: r.aboveSma200 ?? null, computed_at: r.analyzedAt });
+      cacheMap.set(t, {
+        ticker: t, verdict: r.verdict, confidence: r.confidence, stop_loss: r.stopLoss,
+        above_sma200: r.aboveSma200 ?? null, turnover20d: r.turnover20d ?? null, computed_at: r.analyzedAt,
+      });
     } catch (err) {
       console.warn('[auto-trade] signal failed for', t, err instanceof Error ? err.message : err);
     }
@@ -298,6 +321,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
       && s?.verdict === 'BUY'
       && meetsMinConfidence(s?.confidence)
       && s?.above_sma200 === true      // 200-day trend filter (strict: unknown = no)
+      && aboveFloor(t)                 // liquidity floor — no money into thin names
       && confirmed(t, 'BUY')           // signal persisted across recomputes
       && !inCooldown(lastSellAt.get(t), config.cooldownDays);
   };

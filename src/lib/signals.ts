@@ -2,6 +2,7 @@ import { analyzeStock } from './ai';
 import { getStockData } from './market';
 import { createSupabaseAdmin } from './supabase-admin';
 import { isPushConfigured, notifyHoldersOfSignal } from './push/send';
+import { medianTurnover } from './botLogic';
 import type { StockAnalysisResult } from './ai/types';
 
 // Shared signal pipeline used by both the on-view route (/api/analyze) and the
@@ -10,12 +11,23 @@ import type { StockAnalysisResult } from './ai/types';
 
 const CACHE_TTL_MS = 4 * 60 * 60 * 1000; // 4 hours — shared across users via DB
 
+// Where a signal request came from + which sampling arm picked it. Logged to
+// signal_history so accuracy can be decomposed by tier/arm (2026-07-04 panel:
+// instrument first — without these columns no coverage change is measurable).
+export interface SignalLogContext {
+  source?: 'held' | 'watch' | 'discovery' | 'active' | 'user';
+  arm?: 'weighted' | 'control' | null;
+}
+
 export interface SignalWithMeta extends StockAnalysisResult {
   cached: boolean;
   aboveSma200?: boolean | null; // trend flag for the bot's 200-day filter
+  turnover20d?: number | null;  // median peso value traded over ~20 sessions (liquidity floor)
 }
 
-export async function getOrComputeSignal(ticker: string, companyName?: string): Promise<SignalWithMeta> {
+export async function getOrComputeSignal(
+  ticker: string, companyName?: string, log: SignalLogContext = {},
+): Promise<SignalWithMeta> {
   const sym = ticker.toUpperCase().replace('.PS', '');
   const admin = createSupabaseAdmin();
 
@@ -31,6 +43,7 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
       analyzedAt: cached.computed_at,
       cached: true,
       aboveSma200: cached.above_sma200 ?? null,
+      turnover20d: cached.turnover20d != null ? Number(cached.turnover20d) : null,
     };
   }
 
@@ -42,6 +55,9 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
   const t = stockData.technicals;
   const aboveSma200 = t && t.sma200 > 0 ? t.currentPrice > t.sma200 : null;
 
+  // Liquidity: PSE Edge history's `volume` field is peso VALUE traded per day.
+  const turnover20d = medianTurnover(stockData.priceHistory.map((d) => d.volume));
+
   await admin.from('signal_cache').upsert({
     ticker: sym,
     verdict: result.verdict,
@@ -51,6 +67,7 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
     stop_loss: result.stopLoss,
     provider: result.provider,
     above_sma200: aboveSma200,
+    turnover20d,
     computed_at: new Date().toISOString(),
   });
 
@@ -59,7 +76,10 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
   if (priceNow) {
     await admin
       .from('signal_history')
-      .insert({ ticker: sym, verdict: result.verdict, confidence: result.confidence, price: priceNow })
+      .insert({
+        ticker: sym, verdict: result.verdict, confidence: result.confidence, price: priceNow,
+        source: log.source ?? 'user', arm: log.arm ?? null, turnover20d,
+      })
       .then(({ error }) => { if (error) console.warn('signal_history insert failed:', error.message); });
   }
 
@@ -71,5 +91,5 @@ export async function getOrComputeSignal(ticker: string, companyName?: string): 
     );
   }
 
-  return { ...result, cached: false, aboveSma200 };
+  return { ...result, cached: false, aboveSma200, turnover20d };
 }

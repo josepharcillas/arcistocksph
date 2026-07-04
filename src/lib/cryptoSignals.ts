@@ -1,7 +1,7 @@
 import { analyzeStock } from './ai';
 import { getCryptoData } from './market/crypto';
 import { createSupabaseAdmin } from './supabase-admin';
-import type { SignalWithMeta } from './signals';
+import type { SignalLogContext, SignalWithMeta } from './signals';
 
 // Crypto counterpart of getOrComputeSignal: same DB cache + accuracy log, but it
 // fetches crypto data (CoinGecko) and stores under a namespaced ticker ("X:BTC")
@@ -14,6 +14,7 @@ export async function getOrComputeCryptoSignal(
   coinId: string,      // CoinGecko id, e.g. "bitcoin"
   symbol: string,      // display, e.g. "BTC"
   name: string,
+  log: SignalLogContext = {},
 ): Promise<SignalWithMeta> {
   const admin = createSupabaseAdmin();
 
@@ -42,8 +43,13 @@ export async function getOrComputeCryptoSignal(
 
   const priceNow = data.technicals?.currentPrice;
   if (priceNow) {
+    // turnover20d stays null for crypto — the CoinGecko universe is already
+    // liquidity-floored upstream (CRYPTO_MIN_VOLUME), so no floor gating here.
     await admin.from('signal_history')
-      .insert({ ticker: cacheTicker, verdict: result.verdict, confidence: result.confidence, price: priceNow })
+      .insert({
+        ticker: cacheTicker, verdict: result.verdict, confidence: result.confidence, price: priceNow,
+        source: log.source ?? 'user', arm: log.arm ?? null,
+      })
       .then(({ error }) => { if (error) console.warn('crypto signal_history insert failed:', error.message); });
   }
 

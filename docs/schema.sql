@@ -160,9 +160,12 @@ create table signal_cache (
   stop_loss numeric,
   provider text,
   above_sma200 boolean, -- price > 200-day SMA at signal time (bot trend filter)
+  turnover20d numeric,  -- median daily peso value traded (~20 sessions) — liquidity floor for bot/advisor
   computed_at timestamptz default now()
 );
 -- No RLS — signal cache is public read, server-only write
+-- Migration from older schema:
+--   alter table signal_cache add column if not exists turnover20d numeric;
 
 -- Signal history — append-only log of every fresh signal + the price at the time,
 -- so we can measure how accurate the signals turned out to be (see /api/signals/accuracy).
@@ -172,8 +175,15 @@ create table signal_history (
   verdict text not null check (verdict in ('BUY', 'SELL', 'HOLD')),
   confidence text not null,
   price numeric not null,
+  source text,         -- what asked for this signal: held | watch | discovery | active | user
+  arm text,            -- discovery sampling arm: weighted | control (null otherwise)
+  turnover20d numeric, -- liquidity at signal time, so accuracy can be decomposed by tier
   created_at timestamptz default now()
 );
+-- Migration from older schema:
+--   alter table signal_history add column if not exists source text;
+--   alter table signal_history add column if not exists arm text;
+--   alter table signal_history add column if not exists turnover20d numeric;
 alter table signal_history enable row level security;
 -- Public may read the stats; only the server (service_role, bypasses RLS) writes.
 create policy "Public read signal history" on signal_history for select using (true);

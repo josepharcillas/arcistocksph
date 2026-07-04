@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   confValue, meetsMinConfidence, pnlPct, exitReason, addToPosition,
   isConfirmed, holdElapsed, inCooldown, trailingStopHit, drawdownHalted,
+  medianTurnover, aboveTurnoverFloor, weightedSample, pickDiscoveryBatch,
 } from './botLogic';
 
 describe('confidence gating', () => {
@@ -172,5 +173,103 @@ describe('drawdownHalted (circuit breaker)', () => {
   });
   it('no peak recorded → never halts', () => {
     expect(drawdownHalted(9000, 0, 10)).toBe(false);
+  });
+});
+
+describe('medianTurnover', () => {
+  it('takes the median of positive day values in the window', () => {
+    expect(medianTurnover([1, 3, 5])).toBe(3);
+    expect(medianTurnover([1, 2, 3, 4])).toBe(2.5);
+  });
+  it('ignores halt days (0) instead of letting them drag the median down', () => {
+    expect(medianTurnover([0, 0, 10, 20, 30])).toBe(20);
+  });
+  it('only looks at the trailing window', () => {
+    const old = Array(30).fill(1_000_000);
+    expect(medianTurnover([...old, ...Array(20).fill(9_000_000)], 20)).toBe(9_000_000);
+  });
+  it('is null when there is no usable data', () => {
+    expect(medianTurnover([])).toBeNull();
+    expect(medianTurnover([0, 0, 0])).toBeNull();
+  });
+});
+
+describe('aboveTurnoverFloor', () => {
+  it('passes at/above the floor, fails below', () => {
+    expect(aboveTurnoverFloor(5_000_000, 5_000_000)).toBe(true);
+    expect(aboveTurnoverFloor(4_999_999, 5_000_000)).toBe(false);
+  });
+  it('is strict: unknown turnover = no (like the SMA filter)', () => {
+    expect(aboveTurnoverFloor(null, 5_000_000)).toBe(false);
+    expect(aboveTurnoverFloor(undefined, 5_000_000)).toBe(false);
+  });
+  it('floor 0 disables the check (crypto path)', () => {
+    expect(aboveTurnoverFloor(null, 0)).toBe(true);
+  });
+});
+
+describe('weightedSample', () => {
+  const items = [{ t: 'A', w: 0 }, { t: 'B', w: 10 }, { t: 'C', w: 90 }];
+  it('never picks zero-weight items', () => {
+    const picked = weightedSample(items, (i) => i.w, 3);
+    expect(picked.map((i) => i.t).sort()).toEqual(['B', 'C']);
+  });
+  it('samples without replacement and respects k', () => {
+    const picked = weightedSample(items, (i) => i.w, 1);
+    expect(picked).toHaveLength(1);
+    expect(new Set(picked).size).toBe(1);
+  });
+  it('is deterministic given a seeded rand: heavier item picked first', () => {
+    // rand=0.5 → roll 50 of total 100 → falls past B(10) into C(90).
+    const picked = weightedSample(items, (i) => i.w, 2, () => 0.5);
+    expect(picked[0].t).toBe('C');
+    expect(picked[1].t).toBe('B');
+  });
+});
+
+describe('pickDiscoveryBatch', () => {
+  const pool = [
+    { ticker: 'LIQ1', turn: 50_000_000 }, { ticker: 'LIQ2', turn: 20_000_000 },
+    { ticker: 'LIQ3', turn: 10_000_000 }, { ticker: 'THIN1', turn: 100_000 },
+    { ticker: 'THIN2', turn: 0 },
+  ];
+  const turnOf = (e: { turn: number }) => e.turn;
+
+  it('splits into weighted + control totalling at most batchSize', () => {
+    const { weighted, control } = pickDiscoveryBatch(pool, turnOf, 4, 5_000_000);
+    expect(control).toHaveLength(1); // 20% of 4, min 1
+    expect(weighted.length).toBeLessThanOrEqual(3);
+    const all = [...weighted, ...control];
+    expect(new Set(all).size).toBe(all.length); // no overlap between arms
+  });
+  it('weighted arm never contains below-floor names', () => {
+    for (let i = 0; i < 25; i++) {
+      const { weighted } = pickDiscoveryBatch(pool, turnOf, 4, 5_000_000);
+      for (const e of weighted) expect(e.turn).toBeGreaterThanOrEqual(5_000_000);
+    }
+  });
+  it('control arm samples the whole pool (audit includes thin names)', () => {
+    // With rand pinned so the shuffle keeps order, the control slice can hit THIN names.
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) {
+      const { control } = pickDiscoveryBatch(pool, turnOf, 4, 5_000_000);
+      for (const e of control) seen.add(e.ticker);
+    }
+    expect([...seen].some((t) => t.startsWith('THIN'))).toBe(true);
+  });
+  it('handles empty pools and zero batch', () => {
+    expect(pickDiscoveryBatch([], turnOf, 5, 0)).toEqual({ weighted: [], control: [] });
+    expect(pickDiscoveryBatch(pool, turnOf, 0, 0)).toEqual({ weighted: [], control: [] });
+  });
+  it('tops up uniformly when there is no turnover data (crypto path)', () => {
+    const noTurn = [{ ticker: 'A', turn: 0 }, { ticker: 'B', turn: 0 }, { ticker: 'C', turn: 0 }, { ticker: 'D', turn: 0 }];
+    const { weighted, control } = pickDiscoveryBatch(noTurn, turnOf, 3, 0);
+    expect(weighted.length + control.length).toBe(3); // batch does NOT collapse to control-only
+  });
+  it('top-up still respects the floor (thin names cannot sneak in)', () => {
+    const { weighted, control } = pickDiscoveryBatch(pool, turnOf, 5, 5_000_000);
+    // 3 liquid names + 1 control slot max from anywhere = at most 4 can be picked
+    for (const e of weighted) expect(e.turn).toBeGreaterThanOrEqual(5_000_000);
+    expect(weighted.length + control.length).toBeLessThanOrEqual(4);
   });
 });
