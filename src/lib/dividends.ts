@@ -5,17 +5,30 @@ import { createSupabaseAdmin } from './supabase-admin';
 import { fetchAllQuotes } from './market';
 import { ttmDividendPerShare, nextUpcomingDividend, entryRating, dedupeDividendEvents, type EntryResult, type DividendRow } from './dividendLogic';
 
+export interface DividendEvent {
+  amount: number;            // ₱ per share
+  divType: string | null;    // Regular | Special | null
+  recordDate: string | null;
+  paymentDate: string | null;
+  isUpcoming: boolean;       // record date still in the future
+}
+
 export interface DividendYieldRow {
   ticker: string;
   companyName: string | null;
   price: number;
-  ttmDps: number;        // ₱ per share over trailing 12 months (common shares)
-  yieldPct: number;
-  payments: number;      // count of dividend events in the TTM window
+  ttmDps: number;            // ₱ per share over trailing 12 months (common shares, all types)
+  yieldPct: number;          // total TTM yield
+  regularTtmDps: number;     // ₱/share from Regular dividends only (recurring)
+  regularYieldPct: number;   // recurring yield — the sustainable number to rank on
+  specialYieldPct: number;   // yield from one-off Special dividends
+  payments: number;          // count of dividend events in the TTM window
+  totalEvents: number;       // count of all known events (incl. upcoming)
   lastAmount: number | null;
   nextRecordDate: string | null;
   nextPaymentDate: string | null;
   nextAmount: number | null;
+  history: DividendEvent[];  // all events, newest-first, for the expandable detail
   verdict: string | null;
   confidence: string | null;
   rsi14: number | null;
@@ -78,11 +91,27 @@ export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
     if (!(ttmDps > 0)) continue;
     const yieldPct = (ttmDps / price) * 100;
 
+    // Recurring vs one-off: only Regular payouts are the sustainable yield.
+    // Anything not explicitly Special counts as regular (most disclosures are).
+    const regularRows = e.rows.filter((r) => r.divType !== 'Special');
+    const regularTtmDps = ttmDividendPerShare(regularRows, now);
+    const regularYieldPct = (regularTtmDps / price) * 100;
+    const specialYieldPct = Math.max(0, yieldPct - regularYieldPct);
+
     const next = nextUpcomingDividend(e.rows, now);
     const sig = signals.get(ticker);
     const past = e.rows
       .filter((r) => r.recordDate && new Date(r.recordDate) <= now)
       .sort((a, b) => b.recordDate!.localeCompare(a.recordDate!));
+
+    // Full event history, newest-first, for the expandable detail.
+    const history: DividendEvent[] = e.rows
+      .map((r) => ({
+        amount: r.amount, divType: r.divType ?? null,
+        recordDate: r.recordDate ?? null, paymentDate: r.paymentDate ?? null,
+        isUpcoming: !!r.recordDate && new Date(r.recordDate + 'T00:00:00+08:00') > now,
+      }))
+      .sort((a, b) => (b.recordDate ?? b.paymentDate ?? '').localeCompare(a.recordDate ?? a.paymentDate ?? ''));
 
     rows.push({
       ticker,
@@ -90,20 +119,27 @@ export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
       price,
       ttmDps,
       yieldPct,
+      regularTtmDps,
+      regularYieldPct,
+      specialYieldPct,
       payments: e.rows.filter((r) => {
         const anchor = r.recordDate ?? r.paymentDate;
         return anchor && new Date(anchor) <= now && Date.now() - new Date(anchor).getTime() < 365 * 86400_000;
       }).length,
+      totalEvents: e.rows.length,
       lastAmount: past[0]?.amount ?? null,
       nextRecordDate: next?.recordDate ?? null,
       nextPaymentDate: next?.paymentDate ?? null,
       nextAmount: next?.amount ?? null,
+      history,
       verdict: sig?.verdict ?? null,
       confidence: sig?.confidence ?? null,
       rsi14: sig?.rsi14 != null ? Number(sig.rsi14) : null,
       aboveSma200: sig?.above_sma200 ?? null,
+      // Entry rating uses the RECURRING yield so a fat one-off special can't
+      // dress up a value trap as a strong entry.
       entry: entryRating({
-        yieldPct,
+        yieldPct: regularYieldPct,
         verdict: sig?.verdict ?? null,
         aboveSma200: sig?.above_sma200 ?? null,
         rsi14: sig?.rsi14 != null ? Number(sig.rsi14) : null,
@@ -114,6 +150,8 @@ export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
     });
   }
 
-  rows.sort((a, b) => b.yieldPct - a.yieldPct);
+  // Rank on recurring yield (sustainable), total yield as the tiebreak — so a
+  // one-time special payout no longer floats a stock to the top.
+  rows.sort((a, b) => b.regularYieldPct - a.regularYieldPct || b.yieldPct - a.yieldPct);
   return { ok: true, asOf: now.toISOString(), coveredTickers: rows.length, rows: rows.slice(0, limit) };
 }

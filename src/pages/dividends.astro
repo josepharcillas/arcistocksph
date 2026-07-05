@@ -17,15 +17,28 @@ const ratingStyle = (r: string) =>
   : 'bg-slate-700/40 text-slate-400';
 const verdictStyle = (v: string | null) =>
   v === 'BUY' ? 'text-green-400' : v === 'SELL' ? 'text-red-400' : 'text-slate-400';
+const typeStyle = (t: string | null) =>
+  t === 'Special' ? 'bg-amber-500/15 text-amber-400' : 'bg-slate-700/40 text-slate-300';
 const peso = (n: number, d = 2) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+const dps = (n: number) => peso(n, n < 1 ? 4 : 2);
+
+// Shared grid so the header row and every summary row line up.
+const grid = 'grid grid-cols-[minmax(0,1.8fr)_1fr_0.9fr_0.6fr_0.9fr_1.3fr_1rem] gap-2 items-center';
 ---
 <DashboardLayout title="Dividends">
+  <style>
+    details > summary { list-style: none; cursor: pointer; }
+    details > summary::-webkit-details-marker { display: none; }
+    .chev { transition: transform .15s ease; }
+    details[open] .chev { transform: rotate(90deg); }
+  </style>
   <div class="p-4 md:p-6">
     <div class="mb-6">
       <h1 class="text-2xl font-bold">💰 Dividend Tracker</h1>
       <p class="text-slate-400 text-sm mt-0.5">
-        PSE stocks ranked by trailing-12-month cash-dividend yield, scraped from official PSE Edge
-        disclosures. Entry rating combines yield, RSI, trend, the AI signal, and upcoming record dates.
+        PSE stocks ranked by <strong class="text-slate-300">recurring</strong> (regular) dividend yield —
+        one-off specials are shown separately so they can't fake a high yield. Tap a stock to see every
+        payout, its amount, and the schedule.
       </p>
     </div>
 
@@ -39,54 +52,98 @@ const peso = (n: number, d = 2) => `₱${n.toLocaleString('en-PH', { minimumFrac
     )}
 
     {rows.length > 0 && (
-      <div class="overflow-x-auto rounded-xl border border-slate-800">
-        <table class="w-full text-sm">
-          <thead>
-            <tr class="bg-slate-900 text-slate-400 text-left">
-              <th class="px-3 py-2.5 font-medium">Stock</th>
-              <th class="px-3 py-2.5 font-medium text-right">Price</th>
-              <th class="px-3 py-2.5 font-medium text-right">12-mo dividends</th>
-              <th class="px-3 py-2.5 font-medium text-right">Yield</th>
-              <th class="px-3 py-2.5 font-medium text-center">AI signal</th>
-              <th class="px-3 py-2.5 font-medium">Next record date</th>
-              <th class="px-3 py-2.5 font-medium">Entry</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr class="border-t border-slate-800/70 hover:bg-slate-900/50">
-                <td class="px-3 py-2.5">
-                  <a href={`/stock/${r.ticker}`} class="font-semibold text-white hover:text-green-400">{r.ticker}</a>
-                  <span class="block text-xs text-slate-500 max-w-[180px] truncate">{r.companyName}</span>
-                </td>
-                <td class="px-3 py-2.5 text-right tabular-nums">{peso(r.price)}</td>
-                <td class="px-3 py-2.5 text-right tabular-nums">
-                  {peso(r.ttmDps)}<span class="text-xs text-slate-500"> /sh · {r.payments}×</span>
-                </td>
-                <td class="px-3 py-2.5 text-right tabular-nums font-semibold text-green-400">{r.yieldPct.toFixed(2)}%</td>
-                <td class={`px-3 py-2.5 text-center text-xs font-medium ${verdictStyle(r.verdict)}`}>
+      <div class="overflow-x-auto">
+        <div class="min-w-[720px] rounded-xl border border-slate-800 overflow-hidden">
+          <div class={`${grid} bg-slate-900 text-slate-400 text-xs font-medium px-3 py-2.5`}>
+            <span>Stock</span>
+            <span class="text-right">Recurring yield</span>
+            <span class="text-right">Total yield</span>
+            <span class="text-center">Payouts</span>
+            <span class="text-center">AI signal</span>
+            <span>Entry</span>
+            <span></span>
+          </div>
+
+          {rows.map((r) => (
+            <details class="border-t border-slate-800/70">
+              <summary class={`${grid} px-3 py-2.5 text-sm hover:bg-slate-900/50`}>
+                <span class="min-w-0">
+                  <span class="font-semibold text-white">{r.ticker}</span>
+                  <span class="block text-xs text-slate-500 truncate">{r.companyName}</span>
+                </span>
+                <span class="text-right tabular-nums font-semibold text-green-400">{r.regularYieldPct.toFixed(2)}%</span>
+                <span class="text-right tabular-nums text-slate-300">
+                  {r.yieldPct.toFixed(2)}%
+                  {r.specialYieldPct >= 0.05 && <span class="block text-[11px] text-amber-400/80">+{r.specialYieldPct.toFixed(1)} special</span>}
+                </span>
+                <span class="text-center tabular-nums text-slate-300">{r.payments}×</span>
+                <span class={`text-center text-xs font-medium ${verdictStyle(r.verdict)}`}>
                   {r.verdict ?? '—'}{r.rsi14 != null && <span class="block text-slate-500 font-normal">RSI {r.rsi14.toFixed(0)}</span>}
-                </td>
-                <td class="px-3 py-2.5 text-xs text-slate-300">
-                  {r.nextRecordDate
-                    ? <>{r.nextRecordDate}{r.nextAmount != null && <span class="text-slate-500"> · {peso(r.nextAmount)}/sh</span>}</>
-                    : <span class="text-slate-600">—</span>}
-                </td>
-                <td class="px-3 py-2.5">
-                  <span class={`inline-block px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${ratingStyle(r.entry.rating)}`} title={r.entry.reasons.join(' · ')}>
+                </span>
+                <span>
+                  <span class={`inline-block px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${ratingStyle(r.entry.rating)}`}>
                     {r.entry.rating}
                   </span>
-                  <span class="block text-[11px] text-slate-500 mt-1 max-w-[260px]">{r.entry.reasons[0]}</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+                </span>
+                <span class="chev text-slate-500 text-center">▸</span>
+              </summary>
+
+              <div class="px-3 pb-4 pt-1 bg-slate-900/30 text-sm">
+                <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400 mb-3">
+                  <span>Price <span class="text-slate-200 tabular-nums">{peso(r.price)}</span></span>
+                  <span>Recurring <span class="text-green-400 tabular-nums">{peso(r.regularTtmDps)}/sh · {r.regularYieldPct.toFixed(2)}%</span></span>
+                  {r.specialYieldPct >= 0.05 && <span>Special <span class="text-amber-400 tabular-nums">{r.specialYieldPct.toFixed(2)}%</span></span>}
+                  <span>Total 12-mo <span class="text-slate-200 tabular-nums">{dps(r.ttmDps)}/sh · {r.yieldPct.toFixed(2)}%</span></span>
+                </div>
+
+                <p class="text-xs text-slate-400 mb-2">
+                  <strong class="text-slate-200">{r.payments}</strong> payout{r.payments === 1 ? '' : 's'} in the last 12 months
+                  {r.totalEvents > r.payments && <span> · {r.totalEvents} on record</span>}.
+                  {r.nextRecordDate && (
+                    <span class="text-green-400"> Next: record {r.nextRecordDate}{r.nextPaymentDate && <span>, pays {r.nextPaymentDate}</span>}{r.nextAmount != null && <span> ({dps(r.nextAmount)}/sh)</span>}.</span>
+                  )}
+                </p>
+
+                <div class="overflow-x-auto rounded-lg border border-slate-800">
+                  <table class="w-full text-xs">
+                    <thead>
+                      <tr class="text-left text-slate-500 bg-slate-900/60">
+                        <th class="px-3 py-1.5 font-medium">Record date</th>
+                        <th class="px-3 py-1.5 font-medium">Type</th>
+                        <th class="px-3 py-1.5 font-medium text-right">Amount /share</th>
+                        <th class="px-3 py-1.5 font-medium">Payment date</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {r.history.map((h) => (
+                        <tr class={`border-t border-slate-800/60 ${h.isUpcoming ? 'bg-green-500/5' : ''}`}>
+                          <td class="px-3 py-1.5 whitespace-nowrap text-slate-300">
+                            {h.recordDate ?? '—'}
+                            {h.isUpcoming && <span class="ml-1.5 inline-block px-1.5 rounded bg-green-500/20 text-green-300 text-[10px]">upcoming</span>}
+                          </td>
+                          <td class="px-3 py-1.5">
+                            <span class={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${typeStyle(h.divType)}`}>{h.divType ?? 'Regular'}</span>
+                          </td>
+                          <td class="px-3 py-1.5 text-right tabular-nums text-slate-200">{dps(h.amount)}</td>
+                          <td class="px-3 py-1.5 whitespace-nowrap text-slate-400">{h.paymentDate ?? '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {r.entry.reasons.length > 0 && (
+                  <p class="text-[11px] text-slate-500 mt-2">Entry: {r.entry.reasons.join(' · ')}</p>
+                )}
+              </div>
+            </details>
+          ))}
+        </div>
       </div>
     )}
 
     <div class="text-xs text-slate-500 mt-6 space-y-1">
-      <p>• Yield = cash dividends per common share (record dates in the last 12 months) ÷ latest price. Special dividends included.</p>
+      <p>• <strong class="text-slate-400">Recurring yield</strong> counts only Regular dividends (the sustainable payout); Special one-offs are shown separately and excluded from ranking + the entry rating.</p>
       <p>• To receive a dividend you must own the stock BEFORE its ex-date (about 1 trading day before the record date). The price usually drops by roughly the dividend on the ex-date — buying just for the payout is not free money.</p>
       <p>• A very high yield can be a trap: the market may be pricing in a dividend cut. That's why SELL-signal names are marked AVOID.</p>
       <p class="text-slate-600 pt-2 text-center">Data from PSE Edge disclosures. This is not financial advice.</p>
