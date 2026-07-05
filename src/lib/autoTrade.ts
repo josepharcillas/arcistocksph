@@ -233,6 +233,11 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   const newCandidates = [...batch.weighted, ...batch.control].map((e) => e.ticker);
   const toCompute = [...new Set([...held, ...watch.filter((t) => !isFresh(t)), ...newCandidates])];
 
+  // Pace fresh AI calls to fit free-tier rate limits (Gemini free = 20 req/min;
+  // bursts cascade 429s into the Groq fallback). Cached hits skip the wait.
+  const aiDelayMs = Number(process.env.AI_CALL_DELAY_MS ?? 3500);
+  const pace = () => new Promise((r) => setTimeout(r, aiDelayMs));
+
   let signalsComputed = 0;
   for (const t of toCompute) {
     const e = uni.get(t);
@@ -242,13 +247,14 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
       : watchSet.has(t) ? { source: 'watch' } : { source: 'discovery', arm: armOf.get(t) ?? null };
     try {
       const r = await computeSignalFor(assetClass, e, log);
-      if (!r.cached) signalsComputed++;
+      if (!r.cached) { signalsComputed++; await pace(); }
       cacheMap.set(t, {
         ticker: t, verdict: r.verdict, confidence: r.confidence, stop_loss: r.stopLoss,
         above_sma200: r.aboveSma200 ?? null, turnover20d: r.turnover20d ?? null, computed_at: r.analyzedAt,
       });
     } catch (err) {
       console.warn('[auto-trade] signal failed for', t, err instanceof Error ? err.message : err);
+      await pace(); // failures burn rate-limit budget too
     }
   }
 

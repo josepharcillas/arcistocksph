@@ -21,6 +21,12 @@ import { fetchTopCryptoQuotes } from './market/crypto';
 const STOCK_MIN_TURNOVER = Number(process.env.STOCK_MIN_TURNOVER ?? 5_000_000);
 const FRESH_MS = 4 * 60 * 60 * 1000; // mirrors signal_cache TTL
 
+// Pace fresh AI calls to fit free-tier rate limits (Gemini 2.5-flash free =
+// 20 req/min → ≥3s spacing; bursts 429 into Groq and 429 there too). Cached
+// hits skip the wait, so warmed-up runs stay fast.
+const AI_CALL_DELAY_MS = Number(process.env.AI_CALL_DELAY_MS ?? 3500);
+const pace = () => new Promise((r) => setTimeout(r, AI_CALL_DELAY_MS));
+
 export interface RefreshOptions {
   topActive?: number; // ring 3 size (default 30)
   rotate?: number;    // ring 4 size (default 30)
@@ -114,22 +120,24 @@ export async function refreshSignals(opts: RefreshOptions = {}): Promise<Refresh
     for (const ticker of tickers) {
       try {
         const r = await getOrComputeSignal(ticker, undefined, log);
-        if (!r.cached) recomputed++;
+        if (!r.cached) { recomputed++; await pace(); }
         if (r.verdict === 'SELL') sells++;
       } catch (err) {
         errors++;
         console.warn('refresh-signals failed for', ticker, err instanceof Error ? err.message : err);
+        await pace(); // failures burn rate-limit budget too
       }
     }
   }
   for (const c of cryptoEntries) {
     try {
       const r = await getOrComputeCryptoSignal(c.ticker, c.id, c.symbol, c.name, { source: 'rotate' });
-      if (!r.cached) recomputed++;
+      if (!r.cached) { recomputed++; await pace(); }
       if (r.verdict === 'SELL') sells++;
     } catch (err) {
       errors++;
       console.warn('refresh-signals failed for', c.ticker, err instanceof Error ? err.message : err);
+      await pace();
     }
   }
 
