@@ -9,6 +9,72 @@
 
 ---
 
+## 💡 Improvement Backlog — Bots & Dividend Tracker (added 2026-07-05, refined via ce-brainstorm)
+
+The bot forward-test + dividend tracker (`/dividends`) are live locally; these
+build on them. **Guiding decision (2026-07-05):** the three bots are a running
+experiment answering "do ArciStocks' picks make money?" — so build *observability*
+now (076–078, read-only, zero contamination) and defer *behavior changes* (079–080)
+until there's data worth preserving, implementing them as NEW bots, never as
+mutations of a running one. Requirements doc for 076+077:
+`docs/brainstorms/2026-07-05-bot-admin-dashboard-requirements.md`.
+
+**Build now (observability):**
+
+- [ ] **TASK-076** — Admin dashboard for all 3 bots *(user request 2026-07-05)*
+  - One page showing STOCK AI, CRYPTO AI, DCA 🐢 side by side: equity, return %,
+    cash, open positions, trade count, win rate, realized P/L, each vs its
+    buy-and-hold benchmark (PSEi-30 / BTC), + an equity-curve mini chart per bot.
+  - **Access: email-gated to the owner** (`joseph.arcillas26@gmail.com`) — no admin
+    role exists today; others are redirected.
+  - Extract win-rate + benchmark math out of `scripts/scoreboard.mjs` into a shared
+    lib so page and script agree. Data exists: `getBotState('stock'|'crypto')`
+    (`src/lib/autoTrade.ts`), `getDcaState()` (`src/lib/dcaBot.ts`).
+  - Size: Medium
+
+- [ ] **TASK-077** — Per-bot transaction log *(user request 2026-07-05)*
+  - Same page as 076 (dashboard on top, expandable per-bot log below — not a
+    separate route). Every transaction: date, BUY/SELL/DIVIDEND, ticker, qty, price,
+    peso value, and the bot's **reason**. Merge `paper_trades` + `dca_dividend_credits`
+    into one newest-first timeline.
+  - **Reason is not persisted today** → add a `reason` column and save it going
+    forward. Past trades show "—"; all future trades show the bot's rationale.
+  - Size: Medium
+
+- [x] **TASK-078** — Split recurring vs special dividend yield *(DONE 2026-07-05)*
+  - `/dividends` now ranks on recurring (Regular-only) yield with special shown
+    separately; entry rating uses the recurring yield so a one-off special can't
+    fake a strong entry. MARC-style specials correctly dropped out of the top.
+  - Shipped together with the **expandable per-stock payout history** (tap a stock
+    to see every payout — amount, type, record + payment dates, upcoming markers)
+    in `src/lib/dividends.ts` + `src/pages/dividends.astro`.
+
+**Defer (behavior changes — implement as NEW bots, after weeks of data):**
+
+- [ ] **TASK-079** — Dividend-strategy bot driven by the tracker
+  - Spin up a NEW bot (e.g. `divbot@arcistocks.local`) that buys the top *recurring*
+    yielders from the tracker (above the liquidity floor, not AVOID-rated), instead
+    of mutating the DCA bot's hardcoded `DIVIDEND_UNIVERSE`. The existing 3 bots stay
+    untouched so their equity curves remain a clean baseline.
+  - Size: Medium — deferred until the current experiment has real data.
+
+- [ ] **TASK-080** — Feed dividend yield into AI signals — as a parallel arm
+  - Passing TTM yield into `StockAnalysisInput.fundamentals.dividendYield` changes
+    the *shared* signal cache both AI bots read, so it can't be a silent in-place
+    change. Do it behind a new signal arm / new bot so the current signal-driven
+    bots keep their unaltered baseline.
+  - Size: Small mechanically, but gated on the same experiment-purity rule as 079.
+
+**Ops (whenever):**
+
+- [ ] **TASK-081** — Merge/close loose ends
+  - Draft PR #1 (`feat/signal-coverage-overhaul`) never merged; prod Supabase needs
+    the new dividend tables + `signal_cache.rsi14` (see `docs/schema.sql`) whenever
+    the app is deployed. Not urgent while running locally.
+  - Size: Small
+
+---
+
 ## Phase 0: Project Setup
 
 - [x] **TASK-001** — Install dependencies (`npm install`) and verify dev server runs
