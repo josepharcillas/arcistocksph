@@ -1,5 +1,6 @@
 ---
 import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import ConsensusPicks from '../../components/signals/ConsensusPicks';
 import BuyIdeas from '../../components/signals/BuyIdeas';
 import SignalsFeed from '../../components/signals/SignalsFeed';
 import SignalAccuracy from '../../components/signals/SignalAccuracy';
@@ -12,6 +13,7 @@ import MarketMovers from '../../components/signals/MarketMovers';
       <p class="text-slate-400 text-sm mt-0.5">What to buy and how much — plus Buy/Sell/Hold for your holdings and what's moving</p>
     </div>
 
+    <ConsensusPicks client:load />
     <BuyIdeas client:load />
     <SignalAccuracy client:load />
     <MarketMovers client:load />

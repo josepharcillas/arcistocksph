@@ -47,6 +47,7 @@ export interface DividendBoard {
 }
 
 const MIN_YIELD = Number(process.env.DIVIDEND_MIN_YIELD ?? 4); // % — entry threshold
+const STOCK_MIN_TURNOVER = Number(process.env.STOCK_MIN_TURNOVER ?? 5_000_000); // ₱/day liquidity floor
 
 export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
   const admin = createSupabaseAdmin();
@@ -156,8 +157,16 @@ export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
     });
   }
 
-  // Rank on recurring yield (sustainable), total yield as the tiebreak — so a
-  // one-time special payout no longer floats a stock to the top.
-  rows.sort((a, b) => b.regularYieldPct - a.regularYieldPct || b.yieldPct - a.yieldPct);
+  // Rank by liquidity TIER first, then recurring yield. A 14% yield you can't
+  // trade (₱0 volume) is worthless to a real investor, so liquid names surface
+  // above thin ones instead of raw yield dangling untradeable junk at the top.
+  //   3 = liquid (≥ floor) · 2 = thin · 1 = very thin · 0 = no trades today
+  const liqTier = (r: DividendYieldRow): number => {
+    if (!(r.volume > 0)) return 0;
+    const m = r.turnover20d ?? r.turnover;
+    return m >= STOCK_MIN_TURNOVER ? 3 : m >= 1_000_000 ? 2 : 1;
+  };
+  rows.sort((a, b) =>
+    liqTier(b) - liqTier(a) || b.regularYieldPct - a.regularYieldPct || b.yieldPct - a.yieldPct);
   return { ok: true, asOf: now.toISOString(), coveredTickers: rows.length, rows: rows.slice(0, limit) };
 }
