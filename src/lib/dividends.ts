@@ -22,6 +22,9 @@ export interface DividendYieldRow {
   regularTtmDps: number;     // ₱/share from Regular dividends only (recurring)
   regularYieldPct: number;   // recurring yield — the sustainable number to rank on
   specialYieldPct: number;   // yield from one-off Special dividends
+  volume: number;            // shares traded today (0 = no trades today — inactive)
+  turnover: number;          // ₱ value traded today (price × volume)
+  turnover20d: number | null;// median daily ₱ turnover over ~20 sessions (stable liquidity)
   payments: number;          // count of dividend events in the TTM window
   totalEvents: number;       // count of all known events (incl. upcoming)
   lastAmount: number | null;
@@ -76,7 +79,7 @@ export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
   // One query for all cached signals on dividend payers.
   const tickers = [...byTicker.keys()];
   const { data: sigRows } = tickers.length
-    ? await admin.from('signal_cache').select('ticker, verdict, confidence, rsi14, above_sma200').in('ticker', tickers)
+    ? await admin.from('signal_cache').select('ticker, verdict, confidence, rsi14, above_sma200, turnover20d').in('ticker', tickers)
     : { data: [] as any[] };
   const signals = new Map((sigRows ?? []).map((s: any) => [s.ticker as string, s]));
 
@@ -122,6 +125,9 @@ export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
       regularTtmDps,
       regularYieldPct,
       specialYieldPct,
+      volume: quote?.volume ?? 0,
+      turnover: price * (quote?.volume ?? 0),
+      turnover20d: sig?.turnover20d != null ? Number(sig.turnover20d) : null,
       payments: e.rows.filter((r) => {
         const anchor = r.recordDate ?? r.paymentDate;
         return anchor && new Date(anchor) <= now && Date.now() - new Date(anchor).getTime() < 365 * 86400_000;

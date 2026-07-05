@@ -21,6 +21,19 @@ const typeStyle = (t: string | null) =>
   t === 'Special' ? 'bg-amber-500/15 text-amber-400' : 'bg-slate-700/40 text-slate-300';
 const peso = (n: number, d = 2) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: d, maximumFractionDigits: d })}`;
 const dps = (n: number) => peso(n, n < 1 ? 4 : 2);
+const compactShares = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(Math.round(n));
+const compactPeso = (n: number) => n >= 1e6 ? `₱${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `₱${Math.round(n / 1e3)}K` : `₱${Math.round(n)}`;
+
+// Liquidity read: is this a stock you can actually trade? Uses the ~20-session
+// median turnover when known (stable), else today's turnover. ₱5M/day is the
+// app's liquidity floor (STOCK_MIN_TURNOVER); below ₱1M is barely tradeable.
+function liquidity(r: DividendYieldRow) {
+  if (!(r.volume > 0)) return { label: 'No trades today', cls: 'text-red-400' };
+  const measure = r.turnover20d ?? r.turnover;
+  if (measure >= 5_000_000) return { label: 'Liquid', cls: 'text-green-400/80' };
+  if (measure >= 1_000_000) return { label: 'Thin', cls: 'text-amber-400' };
+  return { label: 'Very thin', cls: 'text-red-400' };
+}
 
 // Shared grid so the header row and every summary row line up.
 const grid = 'grid grid-cols-[minmax(0,1.8fr)_1fr_0.9fr_0.6fr_0.9fr_1.3fr_1rem] gap-2 items-center';
@@ -64,12 +77,15 @@ const grid = 'grid grid-cols-[minmax(0,1.8fr)_1fr_0.9fr_0.6fr_0.9fr_1.3fr_1rem] 
             <span></span>
           </div>
 
-          {rows.map((r) => (
+          {rows.map((r) => {
+            const liq = liquidity(r);
+            return (
             <details class="border-t border-slate-800/70">
               <summary class={`${grid} px-3 py-2.5 text-sm hover:bg-slate-900/50`}>
                 <span class="min-w-0">
                   <span class="font-semibold text-white">{r.ticker}</span>
                   <span class="block text-xs text-slate-500 truncate">{r.companyName}</span>
+                  <span class={`block text-[11px] ${liq.cls}`}>Vol {compactShares(r.volume)} · {compactPeso(r.turnover)}/day · {liq.label}</span>
                 </span>
                 <span class="text-right tabular-nums font-semibold text-green-400">{r.regularYieldPct.toFixed(2)}%</span>
                 <span class="text-right tabular-nums text-slate-300">
@@ -91,6 +107,7 @@ const grid = 'grid grid-cols-[minmax(0,1.8fr)_1fr_0.9fr_0.6fr_0.9fr_1.3fr_1rem] 
               <div class="px-3 pb-4 pt-1 bg-slate-900/30 text-sm">
                 <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400 mb-3">
                   <span>Price <span class="text-slate-200 tabular-nums">{peso(r.price)}</span></span>
+                  <span>Activity <span class={`tabular-nums ${liq.cls}`}>{compactShares(r.volume)} sh · {compactPeso(r.turnover)} today{r.turnover20d != null && <span class="text-slate-400"> · {compactPeso(r.turnover20d)}/day avg</span>} · {liq.label}</span></span>
                   <span>Recurring <span class="text-green-400 tabular-nums">{peso(r.regularTtmDps)}/sh · {r.regularYieldPct.toFixed(2)}%</span></span>
                   {r.specialYieldPct >= 0.05 && <span>Special <span class="text-amber-400 tabular-nums">{r.specialYieldPct.toFixed(2)}%</span></span>}
                   <span>Total 12-mo <span class="text-slate-200 tabular-nums">{dps(r.ttmDps)}/sh · {r.yieldPct.toFixed(2)}%</span></span>
@@ -137,7 +154,8 @@ const grid = 'grid grid-cols-[minmax(0,1.8fr)_1fr_0.9fr_0.6fr_0.9fr_1.3fr_1rem] 
                 )}
               </div>
             </details>
-          ))}
+            );
+          })}
         </div>
       </div>
     )}
@@ -145,7 +163,8 @@ const grid = 'grid grid-cols-[minmax(0,1.8fr)_1fr_0.9fr_0.6fr_0.9fr_1.3fr_1rem] 
     <div class="text-xs text-slate-500 mt-6 space-y-1">
       <p>• <strong class="text-slate-400">Recurring yield</strong> counts only Regular dividends (the sustainable payout); Special one-offs are shown separately and excluded from ranking + the entry rating.</p>
       <p>• To receive a dividend you must own the stock BEFORE its ex-date (about 1 trading day before the record date). The price usually drops by roughly the dividend on the ex-date — buying just for the payout is not free money.</p>
-      <p>• A very high yield can be a trap: the market may be pricing in a dividend cut. That's why SELL-signal names are marked AVOID.</p>
+      <p>• <strong class="text-slate-400">Activity</strong> = shares + peso value traded today (and ~20-day average when known). <span class="text-green-400/80">Liquid</span> ≥ ₱5M/day, <span class="text-amber-400">Thin</span> ₱1–5M, <span class="text-red-400">Very thin / no trades</span> — a fat yield on a barely-traded stock is a trap you can't easily exit.</p>
+      <p>• A very high yield can also be a trap: the market may be pricing in a dividend cut. That's why SELL-signal names are marked AVOID.</p>
       <p class="text-slate-600 pt-2 text-center">Data from PSE Edge disclosures. This is not financial advice.</p>
     </div>
   </div>
