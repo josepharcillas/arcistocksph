@@ -92,9 +92,33 @@ PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 GROQ_API_KEY=your_groq_key
 # or GEMINI_API_KEY=your_gemini_key
+
+# REQUIRED for the cron endpoints (snapshot-balances, advisor-alerts) — they 401
+# without it. Use any long random string; reuse it in the crontab (step 10).
+PUSH_NOTIFY_SECRET=your_long_random_secret
+
+# REQUIRED to view the private bot dashboard (/dashboard/bots). The gate FAILS
+# CLOSED — if this is unset, even you are redirected away. Must be the exact
+# email you sign in with.
+ADMIN_EMAIL=joseph.arcillas26@gmail.com
+
+# OPTIONAL — Web Push (TASK-041). Leave blank to ship without push; advisor-alerts
+# + SELL-flip pushes then no-op gracefully. NOTE: PUBLIC_FCM_VAPID_KEY is baked
+# into the CLIENT at build time, so to actually enable push you must ALSO add it
+# as a GitHub build secret and pass it in deploy.yml's build step — setting it
+# only here is not enough for the browser to subscribe.
+# PUBLIC_FCM_VAPID_KEY=
+# VAPID_PRIVATE_KEY=
+# VAPID_SUBJECT=mailto:you@example.com
 EOF
 chmod 600 /var/www/arcistocksph/.env
 ```
+
+> The bots, signal refresh, and dividend tracker all run on an **in-process
+> scheduler** (`src/lib/scheduler.ts`, started from middleware) — no external
+> crontab needed for those. Tuning/disable knobs (`STOCK_MIN_TURNOVER`,
+> `DIVIDEND_MIN_YIELD`, `SIGNAL_REFRESH_*`, `DISABLE_BOT_SCHEDULER=1`, etc.) are
+> documented in `.env.example`; the defaults are sensible, so you can omit them.
 
 ## 7. Nginx reverse proxy + HTTPS
 
@@ -152,29 +176,44 @@ curl -I http://127.0.0.1:4321/login   # expect HTTP 200
 
 Then open `https://YOUR_DOMAIN/login` and sign in.
 
----
+## 10. Seed the paper-trading bots (one-time)
 
-## Scheduled signal refresh (push alerts)
+The three bots (STOCK AI, CRYPTO AI, DCA 🐢) need their ₱10,000 paper accounts
+created once against the prod database, or the scheduler runs them against nothing
+and `/dashboard/bots` shows "No bots found". Run the seeder pointed at prod
+Supabase (from your laptop with the repo checked out, or on the server):
 
-So a flip to SELL alerts holders even when nobody is viewing the stock, run the
-refresh endpoint on a schedule. It recomputes signals for every held ticker
-(respecting the 4h cache) and notifies on newly-SELL transitions.
-
-On the server, edit the `deploy` user's crontab (`crontab -e`):
-
-```cron
-# Every 30 min during PSE trading hours (01:30–07:30 UTC ≈ 09:30–15:30 PHT), Mon–Fri
-*/30 1-8 * * 1-5 curl -fsS -X POST \
-  -H "Authorization: Bearer YOUR_PUSH_NOTIFY_SECRET" \
-  -H "Content-Type: application/json" \
-  https://YOUR_DOMAIN/api/cron/refresh-signals
+```bash
+PUBLIC_SUPABASE_URL=https://YOUR_PROJECT.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=your_service_role_key \
+node scripts/seed-bot.mjs
 ```
 
-The `Content-Type: application/json` header is required — Astro's CSRF guard
-rejects server-to-server POSTs without it. The endpoint is also protected by the
-`PUSH_NOTIFY_SECRET` bearer token (set it in the server `.env`).
+Then sign in as `ADMIN_EMAIL` and open `https://YOUR_DOMAIN/dashboard/bots` — you
+should see all three bots at ₱10,000. From here the in-process scheduler grows
+them automatically (stocks 2×/weekday, crypto every 4h, DCA weekly). Sanity-check
+that terminal and page agree by running `node scripts/scoreboard.mjs` against the
+same env.
 
-For the leaderboard's 7-day / 30-day returns, also snapshot balances daily after
+---
+
+## Scheduled crons (external)
+
+> **Most scheduling is already in-process.** `src/lib/scheduler.ts` (started from
+> middleware on the first request after boot) runs the three bots, **signal
+> refresh**, the daily report, and the dividend sync + STRONG-ENTRY alerts. Do
+> **NOT** add an external `refresh-signals` cron — it would double-run signal
+> refresh and waste the AI budget. Only the two endpoints below live *outside* the
+> scheduler and need a real crontab.
+>
+> Because the scheduler starts on the first HTTP request, hit the site once after
+> a fresh `pm2 start` (or point an uptime monitor at it) so the bots begin ticking.
+
+The `Content-Type: application/json` header is required on every call — Astro's
+CSRF guard rejects server-to-server POSTs without it. All endpoints are protected
+by the `PUSH_NOTIFY_SECRET` bearer token (set in the server `.env`, step 6).
+
+For the leaderboard's 7-day / 30-day returns, snapshot balances daily after
 market close:
 
 ```cron
@@ -189,10 +228,12 @@ market close:
 so returns become meaningful after a few days of snapshots.)
 
 To push each user the advisor's headline action when it changes, run the
-advisor-alerts cron after the signal refresh:
+advisor-alerts cron. The in-process scheduler already refreshes signals at 10:00am
++ 2:00pm PHT weekdays, so schedule this a bit after the afternoon refresh warms the
+cache:
 
 ```cron
-# 09:15 UTC ≈ 17:15 PHT, weekdays (after signal refresh warms the cache)
+# 09:15 UTC ≈ 17:15 PHT, weekdays (after the in-process 2:00pm PHT signal refresh)
 15 9 * * 1-5 curl -fsS -X POST \
   -H "Authorization: Bearer YOUR_PUSH_NOTIFY_SECRET" \
   -H "Content-Type: application/json" \

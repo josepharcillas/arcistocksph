@@ -6,8 +6,10 @@
 //   node scripts/seed-bot.mjs --reset    # wipe holdings/trades/snapshots, reset to ₱10,000
 import { createClient } from '@supabase/supabase-js';
 
-const URL = 'http://127.0.0.1:54321';
-const SERVICE = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
+// Defaults target local Supabase; override with env to seed a prod project:
+//   PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... node scripts/seed-bot.mjs
+const URL = process.env.PUBLIC_SUPABASE_URL ?? 'http://127.0.0.1:54321';
+const SERVICE = process.env.SUPABASE_SERVICE_ROLE_KEY ?? 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
 
 const STARTING_CASH = 10000;
 const reset = process.argv.includes('--reset');
