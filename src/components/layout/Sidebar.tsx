@@ -9,6 +9,7 @@ const links = [
   { href: '/dashboard/watchlist', label: 'Watchlist', icon: '👁' },
   { href: '/dashboard/paper-trading', label: 'Paper Trade', icon: '📄' },
   { href: '/leaderboard', label: 'Leaderboard', icon: '🏆' },
+  { href: '/dashboard/bots', label: 'Bots', icon: '🤖' },
   { href: '/dashboard/notifications', label: 'Notifications', icon: '🔔' },
 ];
 

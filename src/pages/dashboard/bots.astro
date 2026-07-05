@@ -1,0 +1,140 @@
+---
+import DashboardLayout from '../../layouts/DashboardLayout.astro';
+import { getBotScoreboard, type BotView } from '../../lib/botScoreboard';
+
+// Owner-only. Middleware already redirects anonymous users on /dashboard/* to
+// /login and sets Astro.locals.user; here we additionally gate to the owner's
+// email. Fails closed: no configured address (and no default match) => redirect.
+const adminEmail = (import.meta.env.ADMIN_EMAIL ?? process.env.ADMIN_EMAIL ?? 'joseph.arcillas26@gmail.com').toLowerCase();
+const email = (Astro.locals.user?.email ?? '').toLowerCase();
+if (!email || email !== adminEmail) {
+  return Astro.redirect('/dashboard');
+}
+
+let bots: BotView[] = [];
+let loadError: string | null = null;
+try {
+  bots = (await getBotScoreboard()).bots;
+} catch (err) {
+  loadError = err instanceof Error ? err.message : 'Failed to load bot data';
+}
+
+const peso = (n: number, d = 2) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+const pct = (n: number | null) => (n == null ? '—' : `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`);
+const signClass = (n: number | null) => (n == null ? 'text-slate-400' : n >= 0 ? 'text-green-400' : 'text-red-400');
+
+// Build an inline-SVG sparkline path from the equity curve (dependency-free).
+function sparkline(points: { value: number }[], w = 260, h = 44) {
+  if (points.length < 2) return null;
+  const vals = points.map((p) => p.value);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const range = max - min || 1;
+  const stepX = w / (points.length - 1);
+  const d = points
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${(i * stepX).toFixed(1)},${(h - ((p.value - min) / range) * h).toFixed(1)}`)
+    .join(' ');
+  return { d, up: vals[vals.length - 1] >= vals[0], w, h };
+}
+
+const actionClass = (a: string) =>
+  a === 'BUY' ? 'text-green-400' : a === 'SELL' ? 'text-red-400' : 'text-amber-400';
+---
+<DashboardLayout title="Bot Dashboard">
+  <div class="p-4 md:p-6">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold">🤖 Bot Dashboard</h1>
+      <p class="text-slate-400 text-sm mt-0.5">
+        Private forward-test: three ₱10,000 paper bots racing — AI Stocks, AI Crypto, and the DCA turtle —
+        each vs a buy-and-hold benchmark. Same numbers as <code class="text-slate-300">scripts/scoreboard.mjs</code>.
+      </p>
+    </div>
+
+    {loadError && <p class="text-red-400 text-sm">Could not load bot data: {loadError}</p>}
+    {!loadError && bots.length === 0 && (
+      <p class="text-slate-400 text-sm">No bots found — seed them with <code class="text-slate-300">node scripts/seed-bot.mjs</code>.</p>
+    )}
+
+    {bots.length > 0 && (
+      <div class="grid gap-4 md:grid-cols-3 mb-8">
+        {bots.map((b) => {
+          const spark = sparkline(b.equityCurve);
+          return (
+            <div class="rounded-xl border border-slate-800 bg-slate-900/50 p-4">
+              <div class="flex items-baseline justify-between">
+                <span class="font-semibold">{b.label}</span>
+                <span class={`text-lg font-bold tabular-nums ${signClass(b.pnlPct)}`}>{pct(b.pnlPct)}</span>
+              </div>
+              <div class="text-2xl font-bold tabular-nums mt-1">{peso(b.equity)}</div>
+
+              {spark && (
+                <svg viewBox={`0 0 ${spark.w} ${spark.h}`} class="w-full h-11 mt-3" preserveAspectRatio="none">
+                  <path d={spark.d} fill="none" stroke-width="2" class={spark.up ? 'stroke-green-400' : 'stroke-red-400'} vector-effect="non-scaling-stroke" />
+                </svg>
+              )}
+
+              <dl class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs mt-3">
+                <div class="flex justify-between"><dt class="text-slate-500">Cash</dt><dd class="tabular-nums">{peso(b.cash)}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Positions</dt><dd class="tabular-nums">{b.positions}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Trades</dt><dd class="tabular-nums">{b.tradeCount}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Win rate</dt><dd class="tabular-nums">{b.winRate == null ? '—' : `${b.winRate.toFixed(0)}%`}</dd></div>
+                <div class="flex justify-between"><dt class="text-slate-500">Realized</dt><dd class={`tabular-nums ${signClass(b.realized)}`}>{peso(b.realized)}</dd></div>
+              </dl>
+
+              {b.benchmarkLabel && (
+                <div class="mt-3 pt-3 border-t border-slate-800 text-xs flex justify-between">
+                  <span class="text-slate-500">vs {b.benchmarkLabel} {pct(b.benchmarkPct)}</span>
+                  <span class={`font-medium tabular-nums ${signClass(b.alphaPct)}`}>{pct(b.alphaPct)}</span>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    )}
+
+    {bots.map((b) => (
+      <details class="mb-3 rounded-xl border border-slate-800 bg-slate-900/30">
+        <summary class="cursor-pointer select-none px-4 py-3 text-sm font-medium flex items-center justify-between">
+          <span>{b.label} — activity</span>
+          <span class="text-slate-500 text-xs">{b.transactions.length} transaction{b.transactions.length === 1 ? '' : 's'}</span>
+        </summary>
+        <div class="overflow-x-auto border-t border-slate-800">
+          {b.transactions.length === 0 ? (
+            <p class="px-4 py-3 text-xs text-slate-500">No transactions yet.</p>
+          ) : (
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="text-left text-slate-500">
+                  <th class="px-3 py-2 font-medium">Date</th>
+                  <th class="px-3 py-2 font-medium">Action</th>
+                  <th class="px-3 py-2 font-medium">Ticker</th>
+                  <th class="px-3 py-2 font-medium text-right">Qty</th>
+                  <th class="px-3 py-2 font-medium text-right">Price</th>
+                  <th class="px-3 py-2 font-medium text-right">Value</th>
+                  <th class="px-3 py-2 font-medium">Reason</th>
+                </tr>
+              </thead>
+              <tbody>
+                {b.transactions.map((t) => (
+                  <tr class="border-t border-slate-800/60">
+                    <td class="px-3 py-2 whitespace-nowrap text-slate-400">{(t.date || '').slice(0, 10)}</td>
+                    <td class={`px-3 py-2 font-medium ${actionClass(t.action)}`}>{t.action}</td>
+                    <td class="px-3 py-2 font-medium">{t.ticker}</td>
+                    <td class="px-3 py-2 text-right tabular-nums">{t.qty == null ? '—' : (Number.isInteger(t.qty) ? t.qty : t.qty.toFixed(6))}</td>
+                    <td class="px-3 py-2 text-right tabular-nums">{t.price == null ? '—' : peso(t.price, t.price < 1 ? 4 : 2)}</td>
+                    <td class="px-3 py-2 text-right tabular-nums">{peso(t.value)}</td>
+                    <td class="px-3 py-2 text-slate-400 max-w-[280px]">{t.reason ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </details>
+    ))}
+
+    <p class="text-slate-600 text-xs mt-6 text-center">
+      Read-only. Paper-trading simulation — not financial advice.
+    </p>
+  </div>
+</DashboardLayout>
