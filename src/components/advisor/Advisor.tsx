@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { SkeletonCard } from '../ui/Skeleton';
 import { computeAdvice, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition } from '../../lib/advisor';
+import { actionStyle, actionColor, actionLabel } from './actionStyles';
 
 interface Holding { ticker: string; qty: number; buy_price: number }
 
@@ -109,17 +110,6 @@ export default function Advisor() {
       </div>
     );
   }
-
-  const actionStyle: Record<string, string> = {
-    EXIT: 'border-red-500/40 bg-red-500/5',
-    TRIM: 'border-amber-500/40 bg-amber-500/5',
-    BUY: 'border-green-500/40 bg-green-500/5',
-    HOLD_CASH: 'border-slate-700 bg-slate-800/40',
-  };
-  const actionLabel: Record<string, string> = { EXIT: 'EXIT', TRIM: 'TRIM', BUY: 'BUY', HOLD_CASH: 'HOLD CASH' };
-  const actionColor: Record<string, string> = {
-    EXIT: 'text-red-400', TRIM: 'text-amber-400', BUY: 'text-green-400', HOLD_CASH: 'text-slate-400',
-  };
 
   return (
     <div className="space-y-6">
