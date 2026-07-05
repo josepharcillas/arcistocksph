@@ -9,14 +9,19 @@ import { createSupabaseAdmin } from '../../../lib/supabase-admin';
 // suggestions are rate-limited by QUALITY (these gates), not by calendar.
 
 const STOCK_MIN_TURNOVER = Number(process.env.STOCK_MIN_TURNOVER ?? 5_000_000);
-const SIGNAL_FRESH_MS = 4 * 60 * 60 * 1000; // mirrors signal_cache TTL
+// How recent a cached BUY must be to be suggested. The signal refresh only runs
+// a couple times a day, so a 4h window (the cache TTL) leaves this empty most of
+// the day; 24h surfaces the latest available reads. Override with
+// OPPORTUNITY_FRESH_HOURS or a ?freshHours=N query param.
+const DEFAULT_FRESH_HOURS = Number(process.env.OPPORTUNITY_FRESH_HOURS ?? 24);
 
 const confRank = (c: string | null): number => (c === 'HIGH' ? 3 : c === 'MEDIUM' ? 2 : c === 'LOW' ? 1 : 0);
 
-export const GET: APIRoute = async () => {
+export const GET: APIRoute = async ({ url }) => {
   try {
     const admin = createSupabaseAdmin();
-    const freshCutoff = new Date(Date.now() - SIGNAL_FRESH_MS).toISOString();
+    const freshHours = Math.max(1, Number(url.searchParams.get('freshHours') ?? DEFAULT_FRESH_HOURS));
+    const freshCutoff = new Date(Date.now() - freshHours * 3_600_000).toISOString();
     const { data } = await admin
       .from('signal_cache')
       .select('ticker, verdict, confidence, stop_loss, turnover20d, above_sma200, computed_at')
