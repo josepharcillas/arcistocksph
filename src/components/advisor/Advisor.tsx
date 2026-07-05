@@ -1,15 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { SkeletonCard } from '../ui/Skeleton';
-import { computeAdvice, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition, type Advice } from '../../lib/advisor';
+import { computeAdvice, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition } from '../../lib/advisor';
 
 interface Holding { ticker: string; qty: number; buy_price: number }
 
 const peso = (n: number) => `₱${n.toLocaleString('en-PH', { maximumFractionDigits: 0 })}`;
 
 export default function Advisor() {
-  const [advice, setAdvice] = useState<Advice | null>(null);
-  const [cash, setCash] = useState(0);
+  const [positions, setPositions] = useState<AdvisorPosition[]>([]);
+  const [realCash, setRealCash] = useState(0);      // actual portfolio cash
+  const [budget, setBudget] = useState(10000);      // cash used for sizing (planning budget when you have none set)
+  const [hasHoldings, setHasHoldings] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
@@ -32,14 +34,15 @@ export default function Advisor() {
       ]);
 
       const cashVal = cashRow ? Number(cashRow.cash) : 0;
-      setCash(cashVal);
+      setRealCash(cashVal);
 
       const priceMap: Record<string, number> = {};
       if (Array.isArray(quoteRes)) for (const q of quoteRes) priceMap[q.symbol] = q.price;
 
       const hs = (holdings ?? []) as Holding[];
+      setHasHoldings(hs.length > 0);
       const held = new Set(hs.map((h) => h.ticker));
-      // Watchlist tickers not already held become zero-share buy candidates (U2).
+      // Watchlist tickers not already held become zero-share buy candidates.
       const watchTickers = [...new Set(((watch ?? []) as { ticker: string }[]).map((w) => w.ticker))].filter((t) => !held.has(t));
 
       // Fetch the signal (verdict + confidence + stop-loss) for each ticker; cached
@@ -63,19 +66,24 @@ export default function Advisor() {
         ticker: t, shares: 0, avgCost: 0, price: priceMap[t] ?? 0, ...(await signalFor(t)),
       }))).then((ps) => ps.filter((p) => p.price > 0)); // skip unknown-price candidates
 
-      // Market-scan opportunities (U-panel 2026-07-04): fresh cached BUYs from the
-      // whole liquid market, quality-gated server-side. Top 2 not already held or
-      // watchlisted become new-entry candidates — no extra AI calls (cache-only).
+      // Market-scan opportunities: fresh cached BUYs from the whole liquid market,
+      // quality-gated server-side. Cache-only (no extra AI calls). With an empty
+      // portfolio, show a fuller buy list (matches the Signals "What to buy now"
+      // panel); with real holdings, stay focused on the top 2 new entries.
       const watchSet = new Set(watchTickers);
+      const oppLimit = held.size === 0 ? 8 : 2;
       const oppPositions: AdvisorPosition[] = ((oppRes?.candidates ?? []) as any[])
         .filter((c) => !held.has(c.ticker) && !watchSet.has(c.ticker) && (priceMap[c.ticker] ?? 0) > 0)
-        .slice(0, 2)
+        .slice(0, oppLimit)
         .map((c) => ({
           ticker: c.ticker, shares: 0, avgCost: 0, price: priceMap[c.ticker],
           verdict: c.verdict, confidence: c.confidence, stopLoss: c.stopLoss ?? null, isNew: true,
         }));
 
-      setAdvice(computeAdvice([...heldPositions, ...watchPositions, ...oppPositions], cashVal, { ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk' }));
+      setPositions([...heldPositions, ...watchPositions, ...oppPositions]);
+      // Size against real cash when you have it; otherwise a ₱10k planning budget
+      // you can edit — so the advisor still tells you what to buy from zero.
+      setBudget(cashVal > 0 ? cashVal : 10000);
       setLoadedAt(new Date());
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not build your advice.');
@@ -84,15 +92,20 @@ export default function Advisor() {
     }
   }
 
+  const advice = useMemo(
+    () => computeAdvice(positions, budget || 0, { ...DEFAULT_ADVISOR_CONFIG, sizing: 'risk' }),
+    [positions, budget],
+  );
+  const planning = !hasHoldings && realCash <= 0; // no real portfolio → budget is hypothetical
+
   if (loading) return <div className="space-y-3">{[1, 2].map((i) => <SkeletonCard key={i} />)}</div>;
   if (error) return <div className="bg-red-400/10 border border-red-400/30 rounded-xl p-4 text-red-300 text-sm">{error}</div>;
-  if (!advice) return null;
 
-  if (advice.positions.length === 0) {
+  if (positions.length === 0) {
     return (
       <div className="bg-slate-900 border border-slate-800 rounded-xl p-8 text-center">
-        <p className="text-slate-400 mb-1">No holdings yet.</p>
-        <p className="text-slate-500 text-sm">Add holdings and set your cash on the Portfolio page, then come back for advice.</p>
+        <p className="text-slate-400 mb-1">Nothing to advise on right now.</p>
+        <p className="text-slate-500 text-sm">No holdings, and no stock currently has a fresh BUY signal that clears the quality gates. Add holdings on the Portfolio page, or check back after the next signal refresh.</p>
       </div>
     );
   }
@@ -110,6 +123,13 @@ export default function Advisor() {
 
   return (
     <div className="space-y-6">
+      {planning && (
+        <p className="text-xs text-slate-400 bg-slate-800/40 border border-slate-700 rounded-lg px-3 py-2">
+          You have no holdings or cash set yet, so this is a <strong className="text-slate-200">planning budget</strong> —
+          adjust it to see what to buy and how much. Set your real cash on the Portfolio page for portfolio-aware advice.
+        </p>
+      )}
+
       {/* Snapshot */}
       <div className="grid grid-cols-3 gap-3">
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
@@ -117,8 +137,19 @@ export default function Advisor() {
           <p className="text-white text-lg font-bold">{peso(advice.equity)}</p>
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
-          <p className="text-slate-400 text-xs">Cash to deploy</p>
-          <p className="text-white text-lg font-bold">{peso(advice.cash)}</p>
+          <p className="text-slate-400 text-xs">{planning ? 'Planning budget' : 'Cash to deploy'}</p>
+          {planning ? (
+            <div className="flex items-center gap-1 mt-0.5">
+              <span className="text-slate-500">₱</span>
+              <input
+                type="number" min="0" step="1000" value={budget}
+                onChange={(e) => setBudget(Math.max(0, Number(e.target.value)))}
+                className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1 text-white text-lg font-bold tabular-nums"
+              />
+            </div>
+          ) : (
+            <p className="text-white text-lg font-bold">{peso(advice.cash)}</p>
+          )}
         </div>
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
           <p className="text-slate-400 text-xs">Concentration cap</p>
