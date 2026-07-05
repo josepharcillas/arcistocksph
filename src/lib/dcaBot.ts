@@ -132,12 +132,10 @@ export async function runDcaBot(): Promise<DcaRunResult> {
       await admin.from('holdings').insert({ user_id: botId, ticker, company_name: name, qty, buy_price: effPrice, buy_date: today() });
       holdings.set(ticker, { ticker, qty, buy_price: effPrice, buy_date: today(), company_name: name });
     }
-    await admin.from('paper_trades').insert({ user_id: botId, ticker, company_name: name, action: 'BUY', qty, price: effPrice })
+    const reason = `Scheduled DCA — ${fractional ? qty.toFixed(8) : qty} unit(s) of ${display(ticker)} for ₱${cost.toFixed(2)}.`;
+    await admin.from('paper_trades').insert({ user_id: botId, ticker, company_name: name, action: 'BUY', qty, price: effPrice, reason })
       .then(({ error }) => { if (error) console.warn('[dca-bot] trade log failed', error.message); });
-    actions.push({
-      kind: 'BUY', ticker: display(ticker), shares: qty, pesos: cost,
-      reason: `Scheduled DCA — ${fractional ? qty.toFixed(8) : qty} unit(s) of ${display(ticker)} for ₱${cost.toFixed(2)}.`,
-    });
+    actions.push({ kind: 'BUY', ticker: display(ticker), shares: qty, pesos: cost, reason });
   }
 
   // --- Stock leg: most-underweight affordable dividend name (equal-weight build) ---

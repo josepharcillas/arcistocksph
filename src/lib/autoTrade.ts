@@ -135,10 +135,10 @@ async function computeSignalFor(assetClass: AssetClass, e: UniverseEntry, log: S
 
 async function logTrade(
   admin: ReturnType<typeof createSupabaseAdmin>,
-  userId: string, ticker: string, action: 'BUY' | 'SELL', qty: number, price: number, name?: string,
+  userId: string, ticker: string, action: 'BUY' | 'SELL', qty: number, price: number, name?: string, reason?: string,
 ) {
   await admin.from('paper_trades').insert({
-    user_id: userId, ticker, company_name: name ?? ticker, action, qty, price,
+    user_id: userId, ticker, company_name: name ?? ticker, action, qty, price, reason: reason ?? null,
   }).then(({ error }) => { if (error) console.warn('[auto-trade] trade log failed', error.message); });
 }
 
@@ -308,10 +308,11 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     cash += proceeds;
     await admin.from('holdings').delete().eq('user_id', botId).eq('ticker', h.ticker);
     byTicker.delete(h.ticker);
-    await logTrade(admin, botId, h.ticker, 'SELL', h.qty, net, h.company_name);
+    const exitReasonText = `${why === 'SELL signal' ? 'confirmed SELL signal' : why} — sold all ${h.qty} unit(s) at ₱${p.toFixed(2)} (${pl >= 0 ? '+' : ''}${pl.toFixed(0)}% vs cost).`;
+    await logTrade(admin, botId, h.ticker, 'SELL', h.qty, net, h.company_name, exitReasonText);
     sellActions.push({
       kind: 'EXIT', ticker: display(h.ticker), shares: h.qty, pesos: proceeds,
-      reason: `${why === 'SELL signal' ? 'confirmed SELL signal' : why} — sold all ${h.qty} unit(s) at ₱${p.toFixed(2)} (${pl >= 0 ? '+' : ''}${pl.toFixed(0)}% vs cost).`,
+      reason: exitReasonText,
     });
   }
 
@@ -383,7 +384,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
         await admin.from('holdings').insert({ user_id: botId, ticker: a.ticker, company_name: name, qty: shares, buy_price: effPrice, buy_date: today(), peak_price: effPrice });
         byTicker.set(a.ticker, { ticker: a.ticker, qty: shares, buy_price: effPrice, buy_date: today(), peak_price: effPrice, company_name: name });
       }
-      await logTrade(admin, botId, a.ticker, 'BUY', shares, effPrice, uni.get(a.ticker)?.name);
+      await logTrade(admin, botId, a.ticker, 'BUY', shares, effPrice, uni.get(a.ticker)?.name, a.reason);
       a.ticker = display(a.ticker); a.shares = shares; a.pesos = cost;
     } else if (a.kind === 'TRIM' && a.ticker && a.shares) {
       const ex = byTicker.get(a.ticker);
@@ -398,7 +399,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
         await admin.from('holdings').update({ qty: newQty }).eq('user_id', botId).eq('ticker', a.ticker);
         ex.qty = newQty;
       }
-      await logTrade(admin, botId, a.ticker, 'SELL', a.shares, net, ex.company_name);
+      await logTrade(admin, botId, a.ticker, 'SELL', a.shares, net, ex.company_name, a.reason);
       a.ticker = display(a.ticker);
     }
   }

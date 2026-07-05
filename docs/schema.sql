@@ -100,8 +100,11 @@ create table paper_trades (
   qty numeric not null check (qty > 0),
   price numeric not null check (price > 0),
   total numeric generated always as (qty * price) stored,
+  reason text, -- bot decision rationale (null for manual user trades); powers the /dashboard/bots log
   traded_at timestamptz default now()
 );
+-- Migration from older schema:
+--   alter table paper_trades add column if not exists reason text;
 alter table paper_trades enable row level security;
 create policy "Users manage own paper trades" on paper_trades using (auth.uid() = user_id);
 
