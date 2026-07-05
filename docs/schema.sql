@@ -161,11 +161,13 @@ create table signal_cache (
   provider text,
   above_sma200 boolean, -- price > 200-day SMA at signal time (bot trend filter)
   turnover20d numeric,  -- median daily peso value traded (~20 sessions) — liquidity floor for bot/advisor
+  rsi14 numeric,        -- 14-day RSI at signal time (dividend tracker entry rating)
   computed_at timestamptz default now()
 );
 -- No RLS — signal cache is public read, server-only write
 -- Migration from older schema:
 --   alter table signal_cache add column if not exists turnover20d numeric;
+--   alter table signal_cache add column if not exists rsi14 numeric;
 
 -- Signal history — append-only log of every fresh signal + the price at the time,
 -- so we can measure how accurate the signals turned out to be (see /api/signals/accuracy).
@@ -188,6 +190,48 @@ alter table signal_history enable row level security;
 -- Public may read the stats; only the server (service_role, bypasses RLS) writes.
 create policy "Public read signal history" on signal_history for select using (true);
 create index signal_history_created_idx on signal_history (created_at);
+
+-- Cash dividend declarations scraped from PSE Edge (Disclosure Form 6-1).
+-- Feeds the /dividends tracker (TTM-yield ranking + entry ratings) and the DCA
+-- bot's dividend crediting. Server-only writes (service_role); public read.
+create table dividends (
+  edge_no text primary key,     -- PSE Edge disclosure id (dedup key)
+  circular_no text,             -- e.g. C05077-2026
+  ticker text not null,
+  company_name text,
+  amount numeric not null,      -- per share, in PHP (USD declarations converted)
+  raw_amount numeric,           -- as declared, in `currency`
+  currency text not null default 'PHP',
+  div_type text,                -- Regular | Special
+  security_type text,           -- COMMON | PREFERRED | OTHERS (yields use COMMON only)
+  record_date date,
+  payment_date date,
+  announced_at timestamptz,     -- disclosure announce time
+  created_at timestamptz default now()
+);
+create index dividends_ticker_record_idx on dividends (ticker, record_date);
+create index dividends_payment_idx on dividends (payment_date);
+-- No RLS — public read, server-only write (like signal_cache)
+
+-- Dedup for dividend entry push alerts: one row per ticker holding the last
+-- alerted signature, so the daily job only notifies on a *change*.
+create table dividend_alert_state (
+  ticker text primary key,
+  signature text,
+  sent_at timestamptz default now()
+);
+-- No RLS — server-only
+
+-- Idempotency ledger for the DCA bot's dividend income: one credit per
+-- (user, disclosure), so re-runs never double-pay.
+create table dca_dividend_credits (
+  user_id uuid references auth.users on delete cascade,
+  edge_no text references dividends on delete cascade,
+  pesos numeric not null,
+  credited_at timestamptz default now(),
+  primary key (user_id, edge_no)
+);
+-- No RLS — server-only
 
 -- ---------------------------------------------------------------------------
 -- Role grants. Hosted Supabase auto-grants new tables to anon/authenticated via

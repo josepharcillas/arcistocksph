@@ -137,6 +137,6 @@ const alpha = (botPnl, bench) => (botPnl == null || bench == null) ? '—' : pct
 console.log('  ' + 'Bot vs benchmark'.padEnd(18) + String(stock ? alpha(stock.pnlPct, stockBench.ret) : '—').padStart(14) + String(crypto ? alpha(crypto.pnlPct, btcBench) : '—').padStart(14));
 console.log(line);
 console.log('  Fees modeled: PSE ~0.7% round-trip (post-CMEPA), crypto ~0.5%.');
-console.log('  DCA bot: weekly buys of dividend blue chips + BTC; dividends NOT');
-console.log('  modeled (no data feed), so its real-world return would be higher.');
+console.log('  DCA bot: weekly buys of dividend blue chips + BTC; cash dividends');
+console.log('  ARE credited from scraped PSE Edge disclosures.');
 console.log('  Not financial advice — paper-trading simulation only.\n');

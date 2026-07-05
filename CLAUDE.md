@@ -9,6 +9,7 @@ A Progressive Web App (PWA) for Filipino investors. It provides AI-powered buy/s
 - **Auth + DB:** Supabase — Google OAuth, Postgres
 - **Market Data:** phisix API (live PSE quotes, all ~385 stocks) + PSE Edge `DisclosureCht.ax` (historical daily OHLCV for indicators). **Yahoo Finance `.PS` was abandoned — it has no live PSE data (frozen ~2019).**
 - **Fundamentals:** PSE Edge scraper for market cap + shares; P/E / EPS / dividend yield via a key-gated external API (`src/lib/market/fundamentalsApi.ts`, EODHD default `TICKER.PSE` or Twelve Data — `FUNDAMENTALS_API_KEY`). With no key, fundamentals return null gracefully (PSE Edge doesn't expose P/E).
+- **Dividends:** PSE Edge disclosure scraper (`src/lib/market/dividendDisclosures.ts`) parses cash-dividend Form 6-1 filings into the `dividends` table. The tracker (`/dividends`, `src/lib/dividends.ts`) ranks stocks by trailing-12-month yield and rates entries (`src/lib/dividendLogic.ts`: yield + RSI + AI verdict + SMA200 + upcoming record date; SELL verdict = AVOID as a value-trap guard). No API key needed — this is the authoritative free source for PSE dividends.
 - **News:** RSS/news headline fetcher for sentiment
 - **AI:** Provider abstraction — Gemini (primary) → Groq (fallback), auto-switched by env key. Default Groq model `llama-3.3-70b-versatile` (override via `GROQ_MODEL`). Signals are DB-cached (`signal_cache`, 4h) and logged (`signal_history`) for the accuracy tracker (`/api/signals/accuracy`).
 - **Push Notifications:** Web Push via VAPID (`web-push` lib + service worker), NOT the legacy FCM server-key API. Keys: `PUBLIC_FCM_VAPID_KEY` + `VAPID_PRIVATE_KEY`.
@@ -59,12 +60,16 @@ For signals specifically, prefer `getOrComputeSignal()` in `src/lib/signals.ts` 
 - `push_subscriptions` — user_id, endpoint, p256dh, auth (Web Push)
 - `push_preferences` — user_id, ticker, enabled (per-stock alert opt-out)
 - `advisor_alert_state` — user_id, signature (dedup for advisor push alerts)
-- `signal_cache` — ticker, verdict, confidence, rationale, target/stop, computed_at (4h shared cache)
+- `signal_cache` — ticker, verdict, confidence, rationale, target/stop, above_sma200, rsi14, computed_at (4h shared cache)
 - `signal_history` — ticker, verdict, confidence, price, created_at (accuracy tracker)
+- `dividends` — edge_no (PK), ticker, amount (PHP/share), div_type, security_type, record_date, payment_date (scraped PSE Edge cash-dividend disclosures)
+- `dividend_alert_state` — ticker, signature (dedup for STRONG-ENTRY dividend push alerts)
+- `dca_dividend_credits` — user_id, edge_no (idempotency ledger so the DCA bot credits each dividend once)
 
 ## Advisor & crons
 - **Advisor** (`/dashboard/advisor`, `src/lib/advisor.ts`): risk-managed buy/trim/exit + sizing from holdings + cash + signals + watchlist. Pure `computeAdvice()` is unit-tested.
-- **Cron endpoints** (POST, guarded by `PUSH_NOTIFY_SECRET`, need `Content-Type: application/json`): `/api/cron/refresh-signals`, `/api/cron/snapshot-balances`, `/api/cron/advisor-alerts`. See `docs/DEPLOY.md` for crontab.
+- **Cron endpoints** (POST, guarded by `PUSH_NOTIFY_SECRET`, need `Content-Type: application/json`): `/api/cron/refresh-signals`, `/api/cron/snapshot-balances`, `/api/cron/advisor-alerts`, `/api/cron/sync-dividends` (`?sinceDays=365` backfills). See `docs/DEPLOY.md` for crontab.
+- **Dividend tracker crons** (in-process scheduler): daily disclosure sync ~6:05pm PHT; STRONG-ENTRY push alerts 8:20am PHT weekdays (dedup via `dividend_alert_state`). Disable with `DISABLE_DIVIDEND_TRACKER=1`.
 
 ## Deploy
 Push-to-`main` deploys via `.github/workflows/deploy.yml` (PM2 on a server). Full setup in `docs/DEPLOY.md`. Commits use `[skip ci]` until prod infra is configured. Run the latest `docs/schema.sql` on prod Supabase.

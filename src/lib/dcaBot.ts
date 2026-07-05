@@ -5,14 +5,15 @@
 //
 // Buy rule: each cycle, buy the most-underweight affordable name in the dividend
 // universe (equal-weight building = diversification + rebalance-by-buying).
-// Sell rule: never. (No dividend feed exists, so dividend income is NOT modeled —
-// this bot's results understate the real strategy, which earns 5-13% yields. Noted
-// in the report.)
+// Sell rule: never. Dividend income IS modeled: paid dividends on held stocks
+// are credited to cash from the scraped PSE Edge `dividends` table (idempotent
+// via dca_dividend_credits).
 
 import { createSupabaseAdmin } from './supabase-admin';
 import { fetchAllQuotes } from './market';
 import { fetchTopCryptoQuotes } from './market/crypto';
 import { STARTING_CASH, STOCK_FEES, CRYPTO_FEES } from './autoTrade';
+import { dedupeDividendEvents } from './dividendLogic';
 
 const DCA_BOT_EMAIL = process.env.DCA_BOT_EMAIL ?? 'dca-bot@arcistocks.local';
 
@@ -58,7 +59,7 @@ export async function runDcaBot(): Promise<DcaRunResult> {
   const botId = await resolveDcaUserId(admin);
 
   const [{ data: holdingsRows }, { data: cashRow }, stockQuotes, cryptoQuotes] = await Promise.all([
-    admin.from('holdings').select('ticker, qty, buy_price, company_name').eq('user_id', botId),
+    admin.from('holdings').select('ticker, qty, buy_price, buy_date, company_name').eq('user_id', botId),
     admin.from('portfolio_cash').select('cash').eq('user_id', botId).maybeSingle(),
     fetchAllQuotes(),
     fetchTopCryptoQuotes(10),
@@ -66,6 +67,7 @@ export async function runDcaBot(): Promise<DcaRunResult> {
   const holdings = new Map(
     ((holdingsRows ?? []) as any[]).map((h) => [h.ticker as string, {
       ticker: h.ticker as string, qty: Number(h.qty), buy_price: Number(h.buy_price),
+      buy_date: (h.buy_date as string | null) ?? null,
       company_name: (h.company_name as string) ?? h.ticker,
     }]),
   );
@@ -76,6 +78,41 @@ export async function runDcaBot(): Promise<DcaRunResult> {
     t.startsWith('X:') ? (cryptoQuotes.get(t)?.price ?? 0) : (stockQuotes.get(t)?.price ?? 0);
 
   const actions: DcaRunResult['actions'] = [];
+
+  // --- Dividend income: credit cash for dividends PAID on held stocks (from the
+  // scraped `dividends` table). This is the half of dividend investing the sim
+  // used to ignore. Idempotent via dca_dividend_credits (one credit per
+  // disclosure). Approximation: uses today's qty, and requires the first buy to
+  // predate the record date — good enough for a paper forward-test.
+  const heldStocks = [...holdings.keys()].filter((t) => !t.startsWith('X:'));
+  if (heldStocks.length > 0) {
+    const since = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
+    const { data: paidRaw } = await admin.from('dividends')
+      .select('edge_no, ticker, amount, security_type, record_date, payment_date, announced_at')
+      .in('ticker', heldStocks).eq('security_type', 'COMMON')
+      .lte('payment_date', today()).gte('payment_date', since);
+    // Same dividend can be filed twice — dedupe per event so we credit once.
+    const byT = new Map<string, any[]>();
+    for (const r of (paidRaw ?? []) as any[]) {
+      const a = byT.get(r.ticker) ?? []; a.push({ ...r, edgeNo: r.edge_no, securityType: r.security_type, recordDate: r.record_date, announcedAt: r.announced_at }); byT.set(r.ticker, a);
+    }
+    const paid = [...byT.values()].flatMap((rows) => dedupeDividendEvents(rows));
+    for (const d of paid as any[]) {
+      const h = holdings.get(d.ticker);
+      if (!h) continue;
+      if (d.record_date && h.buy_date && h.buy_date > d.record_date) continue; // bought too late for this payout
+      const pesos = h.qty * Number(d.amount);
+      if (!(pesos > 0)) continue;
+      const { error } = await admin.from('dca_dividend_credits')
+        .insert({ user_id: botId, edge_no: d.edge_no, pesos });
+      if (error) continue; // duplicate key = already credited on an earlier run
+      cash += pesos;
+      actions.push({
+        kind: 'DIVIDEND', ticker: d.ticker, pesos,
+        reason: `Cash dividend received: ₱${Number(d.amount).toFixed(4)}/sh × ${h.qty} sh = ₱${pesos.toFixed(2)}.`,
+      });
+    }
+  }
 
   async function buy(ticker: string, budget: number, fees: { buyPct: number }, fractional: boolean, name: string) {
     const mkt = price(ticker);
@@ -93,7 +130,7 @@ export async function runDcaBot(): Promise<DcaRunResult> {
       ex.qty = newQty; ex.buy_price = newAvg;
     } else {
       await admin.from('holdings').insert({ user_id: botId, ticker, company_name: name, qty, buy_price: effPrice, buy_date: today() });
-      holdings.set(ticker, { ticker, qty, buy_price: effPrice, company_name: name });
+      holdings.set(ticker, { ticker, qty, buy_price: effPrice, buy_date: today(), company_name: name });
     }
     await admin.from('paper_trades').insert({ user_id: botId, ticker, company_name: name, action: 'BUY', qty, price: effPrice })
       .then(({ error }) => { if (error) console.warn('[dca-bot] trade log failed', error.message); });

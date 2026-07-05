@@ -23,6 +23,7 @@ export interface SignalWithMeta extends StockAnalysisResult {
   cached: boolean;
   aboveSma200?: boolean | null; // trend flag for the bot's 200-day filter
   turnover20d?: number | null;  // median peso value traded over ~20 sessions (liquidity floor)
+  rsi14?: number | null;        // 14-day RSI at signal time (dividend tracker entry rating)
 }
 
 export async function getOrComputeSignal(
@@ -44,6 +45,7 @@ export async function getOrComputeSignal(
       cached: true,
       aboveSma200: cached.above_sma200 ?? null,
       turnover20d: cached.turnover20d != null ? Number(cached.turnover20d) : null,
+      rsi14: cached.rsi14 != null ? Number(cached.rsi14) : null,
     };
   }
 
@@ -68,6 +70,7 @@ export async function getOrComputeSignal(
     provider: result.provider,
     above_sma200: aboveSma200,
     turnover20d,
+    rsi14: t?.rsi14 ?? null,
     computed_at: new Date().toISOString(),
   });
 
@@ -91,5 +94,5 @@ export async function getOrComputeSignal(
     );
   }
 
-  return { ...result, cached: false, aboveSma200, turnover20d };
+  return { ...result, cached: false, aboveSma200, turnover20d, rsi14: t?.rsi14 ?? null };
 }

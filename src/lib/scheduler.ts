@@ -3,6 +3,8 @@ import { runAutoTrade } from './autoTrade';
 import { runDcaBot } from './dcaBot';
 import { writeDailyReport } from './scoreboard';
 import { refreshSignals } from './refreshSignals';
+import { syncDividends } from './market/dividendDisclosures';
+import { checkDividendEntryAlerts } from './dividendAlerts';
 
 // In-process scheduler: while the server is running, fire the bots on cron with
 // no external scheduler needed. Initialised once from middleware.
@@ -114,6 +116,39 @@ export function initScheduler(): void {
     }
   }
 
+  // Dividend tracker: pull the day's new cash-dividend disclosures from PSE
+  // Edge after close (6:05pm PHT daily — incremental, a few requests), then
+  // rate entries + push STRONG ENTRY alerts before the next open (8:20am PHT,
+  // weekdays; reads only the DB, no AI calls). Overrides DIVIDEND_SYNC_CRON /
+  // DIVIDEND_ALERT_CRON; disable with DISABLE_DIVIDEND_TRACKER=1.
+  let dividendScheduled = false;
+  if (process.env.DISABLE_DIVIDEND_TRACKER !== '1') {
+    const syncExpr = process.env.DIVIDEND_SYNC_CRON ?? import.meta.env?.DIVIDEND_SYNC_CRON ?? '5 10 * * *';
+    const alertExpr = process.env.DIVIDEND_ALERT_CRON ?? import.meta.env?.DIVIDEND_ALERT_CRON ?? '20 0 * * 1-5';
+    if (cron.validate(syncExpr)) {
+      cron.schedule(syncExpr, async () => {
+        try {
+          const r = await syncDividends();
+          console.log(`[dividend-sync] +${r.inserted} new (seen ${r.seen}, known ${r.skippedKnown}, errors ${r.errors})`);
+        } catch (err) {
+          console.warn('[dividend-sync] failed:', err instanceof Error ? err.message : err);
+        }
+      }, { timezone: 'Etc/UTC' });
+      dividendScheduled = true;
+    }
+    if (cron.validate(alertExpr)) {
+      cron.schedule(alertExpr, async () => {
+        try {
+          const r = await checkDividendEntryAlerts();
+          console.log(`[dividend-alerts] strong: ${r.strongEntries.join(', ') || 'none'} · pushes ${r.alertsSent}`);
+        } catch (err) {
+          console.warn('[dividend-alerts] failed:', err instanceof Error ? err.message : err);
+        }
+      }, { timezone: 'Etc/UTC' });
+      dividendScheduled = true;
+    }
+  }
+
   // Daily report: log + save a both-bots scoreboard once a day after PSE close
   // (default 3:35pm PHT = 07:35 UTC). Override AUTOTRADE_REPORT_CRON; set
   // DISABLE_DAILY_REPORT=1 to turn off.
@@ -134,4 +169,5 @@ export function initScheduler(): void {
   if (dcaScheduled) console.log(`[scheduler] DCA bot (UTC): "${dcaExpr}" — weekly, Mon 10:15am PHT`);
   if (refreshScheduled) console.log(`[scheduler] SIGNAL refresh (UTC): market ${refreshExprs.map((e) => `"${e}"`).join(', ')} · crypto ${cryptoRefreshExprs.map((e) => `"${e}"`).join(', ')} — all liquid stocks + all active coins`);
   if (reportScheduled) console.log(`[scheduler] DAILY report (UTC): "${reportExpr}" — logs + saves ./reports`);
+  if (dividendScheduled) console.log('[scheduler] DIVIDEND tracker: sync 6:05pm PHT daily · entry alerts 8:20am PHT weekdays');
 }

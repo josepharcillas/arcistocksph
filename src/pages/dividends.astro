@@ -1,0 +1,95 @@
+---
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import { getDividendBoard, type DividendYieldRow } from '../lib/dividends';
+
+let rows: DividendYieldRow[] = [];
+let loadError: string | null = null;
+try {
+  rows = (await getDividendBoard(60)).rows;
+} catch (err) {
+  loadError = err instanceof Error ? err.message : 'Failed to load dividend data';
+}
+
+const ratingStyle = (r: string) =>
+  r === 'STRONG ENTRY' ? 'bg-green-500/20 text-green-300'
+  : r === 'GOOD ENTRY' ? 'bg-emerald-500/10 text-emerald-400'
+  : r === 'AVOID' ? 'bg-red-500/15 text-red-400'
+  : 'bg-slate-700/40 text-slate-400';
+const verdictStyle = (v: string | null) =>
+  v === 'BUY' ? 'text-green-400' : v === 'SELL' ? 'text-red-400' : 'text-slate-400';
+const peso = (n: number, d = 2) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+---
+<DashboardLayout title="Dividends">
+  <div class="p-4 md:p-6">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold">💰 Dividend Tracker</h1>
+      <p class="text-slate-400 text-sm mt-0.5">
+        PSE stocks ranked by trailing-12-month cash-dividend yield, scraped from official PSE Edge
+        disclosures. Entry rating combines yield, RSI, trend, the AI signal, and upcoming record dates.
+      </p>
+    </div>
+
+    {loadError && <p class="text-red-400 text-sm">Could not load dividend data: {loadError}</p>}
+
+    {!loadError && rows.length === 0 && (
+      <p class="text-slate-400 text-sm">
+        No dividend data yet — the disclosure sync hasn't run. It fills automatically on the daily
+        schedule, or trigger it via <code class="text-slate-300">/api/cron/sync-dividends</code>.
+      </p>
+    )}
+
+    {rows.length > 0 && (
+      <div class="overflow-x-auto rounded-xl border border-slate-800">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-slate-900 text-slate-400 text-left">
+              <th class="px-3 py-2.5 font-medium">Stock</th>
+              <th class="px-3 py-2.5 font-medium text-right">Price</th>
+              <th class="px-3 py-2.5 font-medium text-right">12-mo dividends</th>
+              <th class="px-3 py-2.5 font-medium text-right">Yield</th>
+              <th class="px-3 py-2.5 font-medium text-center">AI signal</th>
+              <th class="px-3 py-2.5 font-medium">Next record date</th>
+              <th class="px-3 py-2.5 font-medium">Entry</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr class="border-t border-slate-800/70 hover:bg-slate-900/50">
+                <td class="px-3 py-2.5">
+                  <a href={`/stock/${r.ticker}`} class="font-semibold text-white hover:text-green-400">{r.ticker}</a>
+                  <span class="block text-xs text-slate-500 max-w-[180px] truncate">{r.companyName}</span>
+                </td>
+                <td class="px-3 py-2.5 text-right tabular-nums">{peso(r.price)}</td>
+                <td class="px-3 py-2.5 text-right tabular-nums">
+                  {peso(r.ttmDps)}<span class="text-xs text-slate-500"> /sh · {r.payments}×</span>
+                </td>
+                <td class="px-3 py-2.5 text-right tabular-nums font-semibold text-green-400">{r.yieldPct.toFixed(2)}%</td>
+                <td class={`px-3 py-2.5 text-center text-xs font-medium ${verdictStyle(r.verdict)}`}>
+                  {r.verdict ?? '—'}{r.rsi14 != null && <span class="block text-slate-500 font-normal">RSI {r.rsi14.toFixed(0)}</span>}
+                </td>
+                <td class="px-3 py-2.5 text-xs text-slate-300">
+                  {r.nextRecordDate
+                    ? <>{r.nextRecordDate}{r.nextAmount != null && <span class="text-slate-500"> · {peso(r.nextAmount)}/sh</span>}</>
+                    : <span class="text-slate-600">—</span>}
+                </td>
+                <td class="px-3 py-2.5">
+                  <span class={`inline-block px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${ratingStyle(r.entry.rating)}`} title={r.entry.reasons.join(' · ')}>
+                    {r.entry.rating}
+                  </span>
+                  <span class="block text-[11px] text-slate-500 mt-1 max-w-[260px]">{r.entry.reasons[0]}</span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    )}
+
+    <div class="text-xs text-slate-500 mt-6 space-y-1">
+      <p>• Yield = cash dividends per common share (record dates in the last 12 months) ÷ latest price. Special dividends included.</p>
+      <p>• To receive a dividend you must own the stock BEFORE its ex-date (about 1 trading day before the record date). The price usually drops by roughly the dividend on the ex-date — buying just for the payout is not free money.</p>
+      <p>• A very high yield can be a trap: the market may be pricing in a dividend cut. That's why SELL-signal names are marked AVOID.</p>
+      <p class="text-slate-600 pt-2 text-center">Data from PSE Edge disclosures. This is not financial advice.</p>
+    </div>
+  </div>
+</DashboardLayout>
