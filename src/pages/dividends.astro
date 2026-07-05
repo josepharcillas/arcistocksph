@@ -36,7 +36,7 @@ function liquidity(r: DividendYieldRow) {
 }
 
 // Shared grid so the header row and every summary row line up.
-const grid = 'grid grid-cols-[minmax(0,1.8fr)_1fr_0.9fr_0.6fr_0.9fr_1.3fr_1rem] gap-2 items-center';
+const grid = 'grid grid-cols-[minmax(0,1.6fr)_0.8fr_1fr_0.9fr_0.55fr_0.85fr_1.25fr_1rem] gap-2 items-center';
 ---
 <DashboardLayout title="Dividends">
   <style>
@@ -66,9 +66,10 @@ const grid = 'grid grid-cols-[minmax(0,1.8fr)_1fr_0.9fr_0.6fr_0.9fr_1.3fr_1rem] 
 
     {rows.length > 0 && (
       <div class="overflow-x-auto">
-        <div class="min-w-[720px] rounded-xl border border-slate-800 overflow-hidden">
+        <div class="min-w-[820px] rounded-xl border border-slate-800 overflow-hidden">
           <div class={`${grid} bg-slate-900 text-slate-400 text-xs font-medium px-3 py-2.5`}>
             <span>Stock</span>
+            <span class="text-right">Price</span>
             <span class="text-right">Recurring yield</span>
             <span class="text-right">Total yield</span>
             <span class="text-center">Payouts</span>
@@ -87,6 +88,7 @@ const grid = 'grid grid-cols-[minmax(0,1.8fr)_1fr_0.9fr_0.6fr_0.9fr_1.3fr_1rem] 
                   <span class="block text-xs text-slate-500 truncate">{r.companyName}</span>
                   <span class={`block text-[11px] ${liq.cls}`}>Vol {compactShares(r.volume)} · {compactPeso(r.turnover)}/day · {liq.label}</span>
                 </span>
+                <span class="text-right tabular-nums text-slate-200">{peso(r.price)}</span>
                 <span class="text-right tabular-nums font-semibold text-green-400">{r.regularYieldPct.toFixed(2)}%</span>
                 <span class="text-right tabular-nums text-slate-300">
                   {r.yieldPct.toFixed(2)}%
