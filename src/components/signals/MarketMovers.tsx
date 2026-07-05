@@ -8,7 +8,11 @@ interface Mover {
   ticker: string; name: string; price: number; changePct: number; turnover: number;
   verdict: string | null; confidence: string | null;
 }
-interface MoversPayload { asOf: string; minTurnover: number; gainers: Mover[]; mostActive: Mover[] }
+interface MoversPayload {
+  asOf: string; minTurnover: number;
+  gainers: Mover[]; mostActive: Mover[];
+  crypto?: { gainers: Mover[]; mostActive: Mover[] };
+}
 
 const pesoM = (n: number) =>
   n >= 1_000_000_000 ? `₱${(n / 1_000_000_000).toFixed(1)}B` : `₱${(n / 1_000_000).toFixed(1)}M`;
@@ -23,7 +27,7 @@ function SignalBadge({ verdict, confidence }: { verdict: string | null; confiden
   );
 }
 
-function MoverList({ title, movers, metric }: { title: string; movers: Mover[]; metric: 'change' | 'turnover' }) {
+function MoverList({ title, movers, metric, linkable = true }: { title: string; movers: Mover[]; metric: 'change' | 'turnover'; linkable?: boolean }) {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-xl p-4">
       <h3 className="text-sm font-semibold text-slate-300 mb-2">{title}</h3>
@@ -31,7 +35,9 @@ function MoverList({ title, movers, metric }: { title: string; movers: Mover[]; 
         {movers.map((m) => (
           <div key={m.ticker} className="flex items-center justify-between py-1 border-b border-slate-800/60 last:border-0">
             <div className="flex items-center gap-2 min-w-0">
-              <a href={`/stock/${m.ticker}`} className="font-bold text-white hover:text-green-400 text-sm">{m.ticker}</a>
+              {linkable
+                ? <a href={`/stock/${m.ticker}`} className="font-bold text-white hover:text-green-400 text-sm">{m.ticker}</a>
+                : <span className="font-bold text-white text-sm">{m.ticker}</span>}
               <SignalBadge verdict={m.verdict} confidence={m.confidence} />
             </div>
             <div className="text-right text-xs shrink-0">
@@ -70,13 +76,22 @@ export default function MarketMovers() {
 
   return (
     <div className="mb-6">
-      <h2 className="text-lg font-semibold mb-2">Market movers</h2>
+      <h2 className="text-lg font-semibold mb-2">Market movers — PSE</h2>
       <div className="grid md:grid-cols-2 gap-3">
         <MoverList title="Top gainers today" movers={data.gainers} metric="change" />
         <MoverList title="Most actively traded" movers={data.mostActive} metric="turnover" />
       </div>
+      {data.crypto && (data.crypto.gainers.length > 0 || data.crypto.mostActive.length > 0) && (
+        <>
+          <h2 className="text-lg font-semibold mb-2 mt-5">Market movers — Crypto</h2>
+          <div className="grid md:grid-cols-2 gap-3">
+            <MoverList title="Top gainers (24h)" movers={data.crypto.gainers} metric="change" linkable={false} />
+            <MoverList title="Most actively traded" movers={data.crypto.mostActive} metric="turnover" linkable={false} />
+          </div>
+        </>
+      )}
       <p className="text-slate-600 text-[11px] mt-1.5">
-        Liquid stocks only ({pesoM(data.minTurnover)}+ typical daily turnover). Badges show fresh AI signals where available — H/M/L = confidence.
+        Liquid assets only (stocks {pesoM(data.minTurnover)}+ typical daily turnover; coins volume-floored). Badges show fresh AI signals where available — H/M/L = confidence.
       </p>
     </div>
   );

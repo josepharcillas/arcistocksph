@@ -76,26 +76,40 @@ export function initScheduler(): void {
     dcaScheduled = true;
   }
 
-  // Signal refresh — holdings + watchlists + top-30 most-active, so the signals
-  // page, movers panel, and advisor track the live market (there is no external
-  // crontab; this server IS the service). 10:00am + 2:00pm PHT Mon–Fri, offset
-  // from the bot runs (9:45am/3:00pm) to spread AI-provider load; the 4h signal
-  // cache keeps the second run cheap. Override SIGNAL_REFRESH_CRON (';'-separated
-  // UTC exprs) / SIGNAL_REFRESH_TOP_ACTIVE; DISABLE_SIGNAL_REFRESH=1 turns it off.
+  // Signal refresh — five rings (holdings + watchlists + top-active + liquid-
+  // stock rotation + crypto rotation), so the signals page, movers panel, and
+  // advisor track the WHOLE liquid market (there is no external crontab; this
+  // server IS the service). Weekday runs at 10:00am + 2:00pm PHT cover stocks +
+  // crypto; a daily 8:30am/8:30pm PHT crypto-only run keeps coin coverage
+  // building on weekends when the PSE runs are silent. Ring sizes are the
+  // AI-budget knobs. Override SIGNAL_REFRESH_CRON / SIGNAL_REFRESH_CRYPTO_CRON
+  // (';'-separated UTC exprs), SIGNAL_REFRESH_TOP_ACTIVE / _ROTATE / _CRYPTO;
+  // DISABLE_SIGNAL_REFRESH=1 turns it all off.
   const refreshExprs = (process.env.SIGNAL_REFRESH_CRON ?? import.meta.env?.SIGNAL_REFRESH_CRON ?? '0 2 * * 1-5;0 6 * * 1-5')
+    .split(';').map((s) => s.trim()).filter((e) => e && cron.validate(e));
+  const cryptoRefreshExprs = (process.env.SIGNAL_REFRESH_CRYPTO_CRON ?? import.meta.env?.SIGNAL_REFRESH_CRYPTO_CRON ?? '30 0 * * *;30 12 * * *')
     .split(';').map((s) => s.trim()).filter((e) => e && cron.validate(e));
   let refreshScheduled = false;
   if (process.env.DISABLE_SIGNAL_REFRESH !== '1') {
-    const topActive = Number(process.env.SIGNAL_REFRESH_TOP_ACTIVE ?? 30);
+    const sizes = {
+      topActive: Number(process.env.SIGNAL_REFRESH_TOP_ACTIVE ?? 30),
+      rotate: Number(process.env.SIGNAL_REFRESH_ROTATE ?? 30),
+      cryptoTop: Number(process.env.SIGNAL_REFRESH_CRYPTO ?? 15),
+    };
+    const runRefresh = (opts: Parameters<typeof refreshSignals>[0], label: string) => async () => {
+      try {
+        const r = await refreshSignals(opts);
+        console.log(`[refresh-signals:${label}] checked ${r.checked} (held ${r.held} · watch ${r.watch} · active ${r.active} · rotate ${r.rotate} · crypto ${r.crypto}) · recomputed ${r.recomputed} · errors ${r.errors}`);
+      } catch (err) {
+        console.warn(`[refresh-signals:${label}] run failed:`, err instanceof Error ? err.message : err);
+      }
+    };
     for (const expr of refreshExprs) {
-      cron.schedule(expr, async () => {
-        try {
-          const r = await refreshSignals(topActive);
-          console.log(`[refresh-signals] checked ${r.checked} (held ${r.held} · watch ${r.watch} · active ${r.active}) · recomputed ${r.recomputed} · errors ${r.errors}`);
-        } catch (err) {
-          console.warn('[refresh-signals] run failed:', err instanceof Error ? err.message : err);
-        }
-      }, { timezone: 'Etc/UTC' });
+      cron.schedule(expr, runRefresh(sizes, 'market'), { timezone: 'Etc/UTC' });
+      refreshScheduled = true;
+    }
+    for (const expr of cryptoRefreshExprs) {
+      cron.schedule(expr, runRefresh({ topActive: 0, rotate: 0, cryptoTop: sizes.cryptoTop }, 'crypto'), { timezone: 'Etc/UTC' });
       refreshScheduled = true;
     }
   }
@@ -118,6 +132,6 @@ export function initScheduler(): void {
   console.log(`[scheduler] STOCK AI bot (UTC): ${scheduled.map((e) => `"${e}"`).join(', ')} — 9:45am + 3:00pm PHT, Mon–Fri`);
   if (cryptoScheduled) console.log(`[scheduler] CRYPTO AI bot (UTC): "${cryptoExpr}" — every 4h, 24/7`);
   if (dcaScheduled) console.log(`[scheduler] DCA bot (UTC): "${dcaExpr}" — weekly, Mon 10:15am PHT`);
-  if (refreshScheduled) console.log(`[scheduler] SIGNAL refresh (UTC): ${refreshExprs.map((e) => `"${e}"`).join(', ')} — holdings + watchlists + top-active`);
+  if (refreshScheduled) console.log(`[scheduler] SIGNAL refresh (UTC): market ${refreshExprs.map((e) => `"${e}"`).join(', ')} · crypto ${cryptoRefreshExprs.map((e) => `"${e}"`).join(', ')} — all liquid stocks + all active coins`);
   if (reportScheduled) console.log(`[scheduler] DAILY report (UTC): "${reportExpr}" — logs + saves ./reports`);
 }

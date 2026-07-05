@@ -32,6 +32,7 @@ export interface CryptoQuote {
   id: string;      // CoinGecko id, e.g. "bitcoin" (needed for history)
   price: number;   // PHP
   change1d: number; // percent
+  volume: number;  // 24h turnover in PHP (already above the liquidity floor)
 }
 
 export const CRYPTO_PREFIX = 'X:';
@@ -64,6 +65,7 @@ export async function fetchTopCryptoQuotes(limit = 250): Promise<Map<string, Cry
       map.set(ticker, {
         ticker, symbol, name: r.name ?? symbol, id: r.id,
         price: r.current_price, change1d: r.price_change_percentage_24h ?? 0,
+        volume: Number(r.total_volume ?? 0),
       });
       if (map.size >= limit) break;
     }

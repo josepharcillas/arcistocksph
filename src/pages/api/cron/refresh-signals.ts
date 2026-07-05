@@ -2,9 +2,10 @@ import type { APIRoute } from 'astro';
 import { refreshSignals } from '../../../lib/refreshSignals';
 
 // POST wrapper around the shared refresh pipeline (src/lib/refreshSignals.ts —
-// three rings: holdings + watchlists + top-N most-active). The in-process
-// scheduler also runs it directly; this endpoint exists for external crons and
-// manual pokes. ?topActive=N overrides the most-active ring size (default 30).
+// five rings: holdings + watchlists + top-active + liquid-stock rotation +
+// crypto rotation). The in-process scheduler also runs it directly; this
+// endpoint exists for external crons and manual pokes.
+// ?topActive=N&rotate=N&cryptoTop=N override ring sizes (defaults 30/30/15).
 //   */30 1-8 * * 1-5  curl -fsS -X POST \
 //     -H "Authorization: Bearer $PUSH_NOTIFY_SECRET" \
 //     -H "Content-Type: application/json" \
@@ -23,8 +24,10 @@ export const POST: APIRoute = async ({ request, url }) => {
   if (request.headers.get('authorization') !== `Bearer ${secret}`) return json({ error: 'Unauthorized' }, 401);
 
   try {
-    const topActive = Math.max(0, Number(url.searchParams.get('topActive') ?? 30));
-    return json(await refreshSignals(topActive));
+    const num = (k: string, d: number) => Math.max(0, Number(url.searchParams.get(k) ?? d));
+    return json(await refreshSignals({
+      topActive: num('topActive', 30), rotate: num('rotate', 30), cryptoTop: num('cryptoTop', 15),
+    }));
   } catch (err) {
     return json({ error: err instanceof Error ? err.message : 'Unknown error' }, 500);
   }
