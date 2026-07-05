@@ -165,12 +165,16 @@ create table signal_cache (
   above_sma200 boolean, -- price > 200-day SMA at signal time (bot trend filter)
   turnover20d numeric,  -- median daily peso value traded (~20 sessions) — liquidity floor for bot/advisor
   rsi14 numeric,        -- 14-day RSI at signal time (dividend tracker entry rating)
+  pct_from_low numeric, -- % above the trailing (~52wk) low at signal time (Dip Radar washout)
+  macd_hist numeric,    -- MACD histogram at signal time (Dip Radar momentum turn)
   computed_at timestamptz default now()
 );
 -- No RLS — signal cache is public read, server-only write
 -- Migration from older schema:
 --   alter table signal_cache add column if not exists turnover20d numeric;
 --   alter table signal_cache add column if not exists rsi14 numeric;
+--   alter table signal_cache add column if not exists pct_from_low numeric;
+--   alter table signal_cache add column if not exists macd_hist numeric;
 
 -- Signal history — append-only log of every fresh signal + the price at the time,
 -- so we can measure how accurate the signals turned out to be (see /api/signals/accuracy).

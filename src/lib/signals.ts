@@ -3,6 +3,7 @@ import { getStockData } from './market';
 import { createSupabaseAdmin } from './supabase-admin';
 import { isPushConfigured, notifyHoldersOfSignal } from './push/send';
 import { medianTurnover } from './botLogic';
+import { pctFromLow } from './bounceLogic';
 import type { StockAnalysisResult } from './ai/types';
 
 // Shared signal pipeline used by both the on-view route (/api/analyze) and the
@@ -24,6 +25,8 @@ export interface SignalWithMeta extends StockAnalysisResult {
   aboveSma200?: boolean | null; // trend flag for the bot's 200-day filter
   turnover20d?: number | null;  // median peso value traded over ~20 sessions (liquidity floor)
   rsi14?: number | null;        // 14-day RSI at signal time (dividend tracker entry rating)
+  pctFromLow?: number | null;   // % above the trailing (~52wk) low (Dip Radar washout measure)
+  macdHist?: number | null;     // MACD histogram at signal time (Dip Radar momentum turn)
 }
 
 export async function getOrComputeSignal(
@@ -46,6 +49,8 @@ export async function getOrComputeSignal(
       aboveSma200: cached.above_sma200 ?? null,
       turnover20d: cached.turnover20d != null ? Number(cached.turnover20d) : null,
       rsi14: cached.rsi14 != null ? Number(cached.rsi14) : null,
+      pctFromLow: cached.pct_from_low != null ? Number(cached.pct_from_low) : null,
+      macdHist: cached.macd_hist != null ? Number(cached.macd_hist) : null,
     };
   }
 
@@ -60,6 +65,12 @@ export async function getOrComputeSignal(
   // Liquidity: PSE Edge history's `volume` field is peso VALUE traded per day.
   const turnover20d = medianTurnover(stockData.priceHistory.map((d) => d.volume));
 
+  // Dip Radar inputs (additive — do NOT affect verdict/confidence, so the bots are
+  // unchanged): how far above its trailing low the price sits, and the MACD
+  // histogram as a momentum-turn proxy.
+  const fromLow = pctFromLow(stockData.priceHistory.map((d) => d.close), t?.currentPrice ?? 0);
+  const macdHist = t?.macd?.histogram ?? null;
+
   await admin.from('signal_cache').upsert({
     ticker: sym,
     verdict: result.verdict,
@@ -71,6 +82,8 @@ export async function getOrComputeSignal(
     above_sma200: aboveSma200,
     turnover20d,
     rsi14: t?.rsi14 ?? null,
+    pct_from_low: fromLow,
+    macd_hist: macdHist,
     computed_at: new Date().toISOString(),
   });
 
@@ -94,5 +107,5 @@ export async function getOrComputeSignal(
     );
   }
 
-  return { ...result, cached: false, aboveSma200, turnover20d, rsi14: t?.rsi14 ?? null };
+  return { ...result, cached: false, aboveSma200, turnover20d, rsi14: t?.rsi14 ?? null, pctFromLow: fromLow, macdHist };
 }

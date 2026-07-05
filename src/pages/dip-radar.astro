@@ -1,0 +1,118 @@
+---
+import DashboardLayout from '../layouts/DashboardLayout.astro';
+import DipPressureTest from '../components/bounce/DipPressureTest.tsx';
+import { getBounceBoard, type BounceRow } from '../lib/bounceBoard';
+
+let rows: BounceRow[] = [];
+let loadError: string | null = null;
+try {
+  rows = (await getBounceBoard(40)).rows;
+} catch (err) {
+  loadError = err instanceof Error ? err.message : 'Failed to load dip data';
+}
+
+const ratingStyle = (r: string) =>
+  r === 'SETUP' ? 'bg-green-500/20 text-green-300'
+  : r === 'AVOID' ? 'bg-red-500/15 text-red-400'
+  : 'bg-amber-500/15 text-amber-400'; // WAIT
+const ratingIcon = (r: string) => (r === 'SETUP' ? '✅' : r === 'AVOID' ? '⛔' : '⏳');
+const verdictStyle = (v: string | null) =>
+  v === 'BUY' ? 'text-green-400' : v === 'SELL' ? 'text-red-400' : 'text-slate-400';
+const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const grid = 'grid grid-cols-[minmax(0,1.5fr)_0.8fr_0.7fr_0.8fr_0.8fr_1rem] gap-2 items-center';
+---
+<DashboardLayout title="Dip Radar">
+  <style>
+    details > summary { list-style: none; cursor: pointer; }
+    details > summary::-webkit-details-marker { display: none; }
+    .chev { transition: transform .15s ease; }
+    details[open] .chev { transform: rotate(90deg); }
+  </style>
+  <div class="p-4 md:p-6">
+    <div class="mb-6">
+      <h1 class="text-2xl font-bold">📉 Dip Radar</h1>
+      <p class="text-slate-400 text-sm mt-0.5">
+        Washed-out PSE stocks near their lows — each tagged
+        <strong class="text-green-300">SETUP</strong> (oversold and turning up),
+        <strong class="text-amber-400">WAIT</strong> (still falling — a knife), or
+        <strong class="text-red-400">AVOID</strong> (the signal says it's a trap).
+        The disciplined way to "buy the dip" without catching a falling knife.
+      </p>
+    </div>
+
+    <div class="mb-8 max-w-xl">
+      <DipPressureTest client:load />
+    </div>
+
+    {loadError && <p class="text-red-400 text-sm">Could not load dip data: {loadError}</p>}
+
+    {!loadError && rows.length === 0 && (
+      <p class="text-slate-400 text-sm">
+        No dip candidates right now — either nothing liquid is near its low, or the signal cache
+        hasn't been warmed yet. Signals refresh automatically twice a day; you can also pressure-test
+        any ticker above.
+      </p>
+    )}
+
+    {rows.length > 0 && (
+      <div class="overflow-x-auto">
+        <div class="min-w-[680px] rounded-xl border border-slate-800 overflow-hidden">
+          <div class={`${grid} bg-slate-900 text-slate-400 text-xs font-medium px-3 py-2.5`}>
+            <span>Stock</span>
+            <span class="text-right">Price</span>
+            <span class="text-center">RSI</span>
+            <span class="text-center">Above low</span>
+            <span class="text-center">Rating</span>
+            <span></span>
+          </div>
+
+          {rows.map((r) => (
+            <details class="border-t border-slate-800/70">
+              <summary class={`${grid} px-3 py-2.5 text-sm hover:bg-slate-900/50`}>
+                <span class="min-w-0">
+                  <span class="font-semibold text-white">{r.ticker}</span>
+                  <span class="block text-xs text-slate-500 truncate">{r.companyName}</span>
+                  <span class={`block text-[11px] ${verdictStyle(r.verdict)}`}>AI {r.verdict ?? '—'}</span>
+                </span>
+                <span class="text-right tabular-nums text-slate-200">{peso(r.price)}</span>
+                <span class="text-center tabular-nums text-slate-300">{r.rsi14 != null ? r.rsi14.toFixed(0) : '—'}</span>
+                <span class="text-center tabular-nums text-slate-300">{r.pctFromLow != null ? `${r.pctFromLow.toFixed(0)}%` : '—'}</span>
+                <span class="text-center">
+                  <span class={`inline-block px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${ratingStyle(r.rating)}`}>
+                    {ratingIcon(r.rating)} {r.rating}
+                  </span>
+                </span>
+                <span class="chev text-slate-500 text-center">▸</span>
+              </summary>
+
+              <div class="px-3 pb-4 pt-1 bg-slate-900/30 text-sm">
+                <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400 mb-2">
+                  <span>Price <span class="text-slate-200 tabular-nums">{peso(r.price)}</span></span>
+                  {r.rsi14 != null && <span>RSI <span class="text-slate-200 tabular-nums">{r.rsi14.toFixed(0)}</span></span>}
+                  {r.pctFromLow != null && <span>Above low <span class="text-slate-200 tabular-nums">{r.pctFromLow.toFixed(0)}%</span></span>}
+                  <span>Trend <span class="text-slate-200">{r.aboveSma200 == null ? '—' : r.aboveSma200 ? 'above 200-day' : 'below 200-day'}</span></span>
+                  <span>AI <span class={verdictStyle(r.verdict)}>{r.verdict ?? '—'}</span></span>
+                </div>
+                {r.reasons.length > 0 && (
+                  <ul class="space-y-0.5">
+                    {r.reasons.map((reason) => (
+                      <li class="text-[11px] text-slate-500 flex gap-1.5"><span class="text-slate-600">•</span>{reason}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </details>
+          ))}
+        </div>
+      </div>
+    )}
+
+    <div class="text-xs text-slate-500 mt-6 space-y-1">
+      <p>• <strong class="text-slate-400">SETUP</strong> = near its low AND oversold AND the MACD has turned up (momentum bottoming). <strong class="text-amber-400">WAIT</strong> = washed out but the MACD is still falling — no bottom confirmed, so it can keep dropping. <strong class="text-red-400">AVOID</strong> = the AI signal is SELL, so a "cheap" price is likely a value trap.</p>
+      <p>• Only liquid stocks (≥ ₱5M/day traded, the app's floor) appear — a bounce you can't cheaply exit isn't a bounce.</p>
+      <p>• "It fell a lot, so it must go up" is how traders catch falling knives. This tool waits for an actual turn instead of guessing the bottom.</p>
+      <p class="text-slate-600 pt-2 text-center">Signals are AI-generated and cached. This is not financial advice.</p>
+    </div>
+  </div>
+</DashboardLayout>

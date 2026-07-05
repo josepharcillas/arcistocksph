@@ -6,6 +6,7 @@ const links = [
   { href: '/dashboard/signals', label: 'Signals', icon: '📡' },
   { href: '/screener', label: 'Screener', icon: '🔍' },
   { href: '/dividends', label: 'Dividends', icon: '💰' },
+  { href: '/dip-radar', label: 'Dip Radar', icon: '📉' },
   { href: '/dashboard/watchlist', label: 'Watchlist', icon: '👁' },
   { href: '/dashboard/paper-trading', label: 'Paper Trade', icon: '📄' },
   { href: '/leaderboard', label: 'Leaderboard', icon: '🏆' },
