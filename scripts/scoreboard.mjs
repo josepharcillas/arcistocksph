@@ -7,6 +7,7 @@
 import { createClient } from '@supabase/supabase-js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { winRateReplay, alpha, basketReturn } from './lib/botStats.mjs';
 
 const URL = 'http://127.0.0.1:54321';
 const SERVICE = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU';
@@ -55,17 +56,11 @@ async function summarize(email, prices) {
   const cash = cashRow ? Number(cashRow.cash) : STARTING_CASH;
   const holdingsValue = (holdings ?? []).reduce((s, h) => s + Number(h.qty) * (prices.get(h.ticker) ?? Number(h.buy_price)), 0);
   const equity = cash + holdingsValue;
-  const book = {}; let wins = 0, closed = 0, realized = 0;
-  for (const t of trades ?? []) {
-    const b = (book[t.ticker] ??= { qty: 0, cost: 0 });
-    const q = Number(t.qty), pr = Number(t.price);
-    if (t.action === 'BUY') { b.cost += q * pr; b.qty += q; }
-    else { const avg = b.qty > 0 ? b.cost / b.qty : pr; const pl = (pr - avg) * q; realized += pl; closed++; if (pl >= 0) wins++; b.qty -= q; b.cost -= avg * q; }
-  }
+  const { closed, realized, winRate } = winRateReplay(trades);
   return {
     cash, equity, positions: (holdings ?? []).length, trades: (trades ?? []).length,
     pnlPct: ((equity - STARTING_CASH) / STARTING_CASH) * 100,
-    closed, winRate: closed ? (wins / closed) * 100 : null, realized,
+    closed, winRate, realized,
     startDate: snaps?.[0]?.snapshot_date ?? null,
   };
 }
@@ -97,9 +92,7 @@ async function stockBasketReturn(sp) {
     try { await fs.mkdir(path.dirname(BASELINE_FILE), { recursive: true }); await fs.writeFile(BASELINE_FILE, JSON.stringify(data, null, 2)); } catch { /* ignore */ }
     return { ret: null, since: data.stock.date };
   }
-  const rets = [];
-  for (const [t, base] of Object.entries(data.stock.prices)) { const cur = sp.get(t); if (cur > 0 && base > 0) rets.push(cur / base - 1); }
-  const ret = rets.length ? (rets.reduce((s, x) => s + x, 0) / rets.length) * 100 : null;
+  const ret = basketReturn(data.stock.prices, sp);
   return { ret, since: data.stock.date };
 }
 
@@ -133,8 +126,8 @@ console.log(row('Realized P/L', (s) => peso(s.realized)));
 console.log(line);
 console.log('  BUY & HOLD BENCHMARK (do the bots beat just holding?)');
 console.log('  ' + 'Benchmark'.padEnd(18) + ('PSEi-30 ' + pct(stockBench.ret)).padStart(14) + ('BTC ' + pct(btcBench)).padStart(14));
-const alpha = (botPnl, bench) => (botPnl == null || bench == null) ? '—' : pct(botPnl - bench);
-console.log('  ' + 'Bot vs benchmark'.padEnd(18) + String(stock ? alpha(stock.pnlPct, stockBench.ret) : '—').padStart(14) + String(crypto ? alpha(crypto.pnlPct, btcBench) : '—').padStart(14));
+const alphaCell = (botPnl, bench) => { const a = alpha(botPnl, bench); return a == null ? '—' : pct(a); };
+console.log('  ' + 'Bot vs benchmark'.padEnd(18) + String(stock ? alphaCell(stock.pnlPct, stockBench.ret) : '—').padStart(14) + String(crypto ? alphaCell(crypto.pnlPct, btcBench) : '—').padStart(14));
 console.log(line);
 console.log('  Fees modeled: PSE ~0.7% round-trip (post-CMEPA), crypto ~0.5%.');
 console.log('  DCA bot: weekly buys of dividend blue chips + BTC; cash dividends');
