@@ -71,10 +71,12 @@ experiment data.
 
 **Ops (whenever):**
 
-- [ ] **TASK-081** — Merge/close loose ends
-  - Draft PR #1 (`feat/signal-coverage-overhaul`) never merged; prod Supabase needs
-    the new dividend tables + `signal_cache.rsi14` (see `docs/schema.sql`) whenever
-    the app is deployed. Not urgent while running locally.
+- [~] **TASK-081** — Merge/close loose ends *(tracked as GH issue #2)*
+  - ~~Draft PR #1 (`feat/signal-coverage-overhaul`) never merged~~ → **merged
+    2026-07-05** (commit `2cc2004`); the overhaul is in `main`. Note was stale.
+  - Remaining (deploy-gated, not code): run the latest `docs/schema.sql` on prod
+    Supabase so the dividend tables + `signal_cache.rsi14` exist when the app is
+    deployed. Blocked on prod infra (TASK-002/059); not urgent while running locally.
   - Size: Small
 
 ---
