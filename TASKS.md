@@ -17,29 +17,33 @@ experiment answering "do ArciStocks' picks make money?" — so build *observabil
 now (076–078, read-only, zero contamination) and defer *behavior changes* (079–080)
 until there's data worth preserving, implementing them as NEW bots, never as
 mutations of a running one. Requirements doc for 076+077:
-`docs/brainstorms/2026-07-05-bot-admin-dashboard-requirements.md`.
+`docs/brainstorms/2026-07-05-bot-admin-dashboard-requirements.md`; plan:
+`docs/plans/2026-07-05-001-feat-bot-admin-dashboard-plan.md`.
+
+**Observability — ALL DONE (076/077/078 shipped 2026-07-05).** Next substantive
+work is the deferred behavior-change bots below, gated on accumulating real
+experiment data.
 
 **Build now (observability):**
 
-- [ ] **TASK-076** — Admin dashboard for all 3 bots *(user request 2026-07-05)*
-  - One page showing STOCK AI, CRYPTO AI, DCA 🐢 side by side: equity, return %,
-    cash, open positions, trade count, win rate, realized P/L, each vs its
-    buy-and-hold benchmark (PSEi-30 / BTC), + an equity-curve mini chart per bot.
-  - **Access: email-gated to the owner** (`joseph.arcillas26@gmail.com`) — no admin
-    role exists today; others are redirected.
-  - Extract win-rate + benchmark math out of `scripts/scoreboard.mjs` into a shared
-    lib so page and script agree. Data exists: `getBotState('stock'|'crypto')`
-    (`src/lib/autoTrade.ts`), `getDcaState()` (`src/lib/dcaBot.ts`).
-  - Size: Medium
+- [x] **TASK-076** — Admin dashboard for all 3 bots *(DONE 2026-07-05)*
+  - `/dashboard/bots` (`src/pages/dashboard/bots.astro`) shows STOCK AI, CRYPTO AI,
+    DCA 🐢 side by side: equity, return %, cash, open positions, trade count, win
+    rate, realized P/L, each vs its buy-and-hold benchmark (PSEi-30 / BTC), + a
+    dependency-free inline-SVG equity sparkline per bot.
+  - **Access: email-gated to the owner** via `ADMIN_EMAIL` (default
+    `joseph.arcillas26@gmail.com`); fails closed, non-owners redirect to `/dashboard`.
+  - Win-rate + benchmark math extracted into `scripts/lib/botStats.mjs` (shared by
+    `scripts/scoreboard.mjs` and the server assembler `src/lib/botScoreboard.ts`) so
+    page and script can't diverge.
 
-- [ ] **TASK-077** — Per-bot transaction log *(user request 2026-07-05)*
-  - Same page as 076 (dashboard on top, expandable per-bot log below — not a
-    separate route). Every transaction: date, BUY/SELL/DIVIDEND, ticker, qty, price,
-    peso value, and the bot's **reason**. Merge `paper_trades` + `dca_dividend_credits`
-    into one newest-first timeline.
-  - **Reason is not persisted today** → add a `reason` column and save it going
-    forward. Past trades show "—"; all future trades show the bot's rationale.
-  - Size: Medium
+- [x] **TASK-077** — Per-bot transaction log *(DONE 2026-07-05)*
+  - Same page as 076 — expandable per-bot log below the cards. Every transaction:
+    date, BUY/SELL/DIVIDEND, ticker, qty, price, peso value, and the bot's **reason**.
+    `paper_trades` + `dca_dividend_credits` (joined to `dividends`) merged into one
+    newest-first timeline via a unit-tested `mergeTransactions` helper.
+  - `reason` column added to `paper_trades`; both bots persist their rationale going
+    forward. Past trades render "—".
 
 - [x] **TASK-078** — Split recurring vs special dividend yield *(DONE 2026-07-05)*
   - `/dividends` now ranks on recurring (Regular-only) yield with special shown
