@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { SkeletonCard } from '../ui/Skeleton';
 import PortfolioSummary from './PortfolioSummary';
 import AddHoldingForm from './AddHoldingForm';
+import ImportScreenshot from './ImportScreenshot';
 
 interface Holding {
   id: string;
@@ -26,6 +27,7 @@ export default function HoldingsList() {
   const [userId, setUserId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAdd, setShowAdd] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [error, setError] = useState('');
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
 
@@ -111,13 +113,30 @@ export default function HoldingsList() {
 
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-semibold">Holdings</h2>
-        <button
-          onClick={() => setShowAdd(!showAdd)}
-          className="bg-green-500 hover:bg-green-400 text-slate-950 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors"
-        >
-          + Add Stock
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setShowImport(!showImport); setShowAdd(false); }}
+            className="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors"
+          >
+            Import screenshot
+          </button>
+          <button
+            onClick={() => { setShowAdd(!showAdd); setShowImport(false); }}
+            className="bg-green-500 hover:bg-green-400 text-slate-950 font-semibold text-sm px-3 py-1.5 rounded-lg transition-colors"
+          >
+            + Add Stock
+          </button>
+        </div>
       </div>
+
+      {showImport && (
+        <ImportScreenshot
+          userId={userId}
+          currentHoldings={holdings.map(h => ({ ticker: h.ticker, qty: h.qty, buy_price: h.buy_price, buy_date: h.buy_date }))}
+          onImported={() => { setShowImport(false); load(); }}
+          onCancel={() => setShowImport(false)}
+        />
+      )}
 
       {showAdd && <AddHoldingForm onAdded={() => { setShowAdd(false); load(); }} />}
 
