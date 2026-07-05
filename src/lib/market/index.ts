@@ -10,13 +10,13 @@ export { fetchQuote, fetchAllQuotes } from './phisix';
 export { computeTechnicals, computeRSI, computeMACD, computeSMA } from './indicators';
 export { fetchHeadlines } from './news';
 
-export async function getStockData(ticker: string, companyName = ticker): Promise<StockAnalysisInput> {
+export async function getStockData(ticker: string, companyName?: string): Promise<StockAnalysisInput> {
   const [historyR, quoteR, fundR, fundApiR, newsR] = await Promise.allSettled([
     fetchPriceHistory(ticker, 300), // PSE Edge: ~250 trading days, enough for SMA200
-    fetchQuote(ticker), // phisix: live price/%change
+    fetchQuote(ticker), // phisix: live price/%change + company name
     fetchFundamentals(ticker), // PSE Edge: market cap + shares
     fetchFundamentalsApi(ticker), // external API: P/E, EPS, dividend yield (key-gated, {} if unset)
-    fetchHeadlines(ticker, companyName),
+    fetchHeadlines(ticker, companyName ?? ticker),
   ]);
 
   const history = historyR.status === 'fulfilled' ? historyR.value : [];
@@ -37,7 +37,9 @@ export async function getStockData(ticker: string, companyName = ticker): Promis
 
   return {
     ticker,
-    companyName,
+    // Fall back to the live quote's name (then the ticker) when the caller
+    // didn't supply one — the stock-detail endpoint relies on this.
+    companyName: companyName ?? quote?.name ?? ticker,
     priceHistory: history,
     technicals: {
       ...baseIndicators,

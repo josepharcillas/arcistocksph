@@ -45,6 +45,20 @@ describe('dedupeDividendEvents', () => {
     expect(dedupeDividendEvents(rows)).toHaveLength(3);
   });
 
+  it('collapses an adjacent-date re-filing but keeps genuinely separate monthly payouts', () => {
+    // AREIT case: same ₱0.62 filed on 05-27 (untyped re-file) and 05-28 (Regular),
+    // plus a real next-month payout — the first two are one event, the third isn't.
+    const out = dedupeDividendEvents([
+      { amount: 0.62, securityType: 'COMMON', recordDate: '2026-05-27', divType: null, announcedAt: '2026-05-20T00:00:00Z' },
+      { amount: 0.62, securityType: 'COMMON', recordDate: '2026-05-28', divType: 'Regular', announcedAt: '2026-05-21T00:00:00Z' },
+      { amount: 0.62, securityType: 'COMMON', recordDate: '2026-06-27', divType: 'Regular', announcedAt: '2026-06-20T00:00:00Z' },
+    ]);
+    expect(out).toHaveLength(2);                 // re-file merged, monthly kept
+    const may = out.find((r) => r.recordDate!.startsWith('2026-05'));
+    expect(may!.divType).toBe('Regular');        // the typed filing represents the cluster
+    expect(ttmDividendPerShare(out, new Date('2026-07-05T12:00:00+08:00'))).toBeCloseTo(1.24); // 0.62 × 2, not × 3
+  });
+
   it('keeps rows without a record date (cannot match safely)', () => {
     const rows = [
       { amount: 0.1, recordDate: null },

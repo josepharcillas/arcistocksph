@@ -16,25 +16,55 @@ export interface DividendRow {
   edgeNo?: string;             // PSE Edge id (carried through for the DCA bot)
 }
 
+// A re-filing of the same dividend usually moves the record date by a day or
+// two, so exact-date matching misses it. Cluster same-amount+security filings
+// whose record dates fall within this window; anchoring each cluster to its
+// first date keeps genuinely separate payouts (e.g. a REIT's monthly ₱0.62,
+// ~30 days apart) from being merged.
+const DEDUP_WINDOW_DAYS = 5;
+
+const asMs = (d: string) => Date.parse(d + 'T00:00:00+08:00');
+
 /** Collapse disclosures describing the SAME dividend event — a company sometimes
- *  files the same dividend more than once (re-filing, or a plain refile that
- *  isn't tagged [Amend]), which would otherwise double-count the yield. A single
- *  event = same record date + amount + security class; the most-recently-
- *  announced filing wins (usually the most complete). Rows without a record date
- *  can't be matched safely, so each is kept as-is. */
+ *  files the same dividend more than once (a re-file, or one not tagged [Amend]),
+ *  which would otherwise double-count the yield. A single event = the same amount
+ *  + security class with record dates within a few days. The most complete filing
+ *  wins (a typed div_type over an untyped re-file, then the newest announcement).
+ *  Rows without a record date can't be matched safely, so each is kept as-is. */
 export function dedupeDividendEvents<T extends DividendRow>(rows: T[]): T[] {
-  const best = new Map<string, T>();
   const kept: T[] = [];
+  const groups = new Map<string, T[]>();
   for (const r of rows) {
     if (!r.recordDate) { kept.push(r); continue; }
-    const key = `${r.recordDate}|${r.amount}|${r.securityType ?? ''}`;
-    const cur = best.get(key);
-    if (!cur) { best.set(key, r); continue; }
-    const rt = r.announcedAt ? Date.parse(r.announcedAt) : 0;
-    const ct = cur.announcedAt ? Date.parse(cur.announcedAt) : 0;
-    if (rt >= ct) best.set(key, r);
+    const key = `${r.amount}|${r.securityType ?? ''}`;
+    const g = groups.get(key);
+    if (g) g.push(r); else groups.set(key, [r]);
   }
-  return [...kept, ...best.values()];
+
+  // Within a cluster, prefer the typed filing, then the most recently announced.
+  const better = (a: T, b: T): T => {
+    const at = a.divType ? 1 : 0, bt = b.divType ? 1 : 0;
+    if (at !== bt) return at > bt ? a : b;
+    return (a.announcedAt ? Date.parse(a.announcedAt) : 0) >= (b.announcedAt ? Date.parse(b.announcedAt) : 0) ? a : b;
+  };
+
+  for (const group of groups.values()) {
+    group.sort((x, y) => x.recordDate!.localeCompare(y.recordDate!));
+    let rep = group[0];
+    let anchorMs = asMs(group[0].recordDate!);
+    for (let i = 1; i < group.length; i++) {
+      const r = group[i];
+      if (asMs(r.recordDate!) - anchorMs <= DEDUP_WINDOW_DAYS * 86400_000) {
+        rep = better(rep, r);
+      } else {
+        kept.push(rep);
+        rep = r;
+        anchorMs = asMs(r.recordDate!);
+      }
+    }
+    kept.push(rep);
+  }
+  return kept;
 }
 
 /** Sum of per-share dividends whose record date falls in the trailing 12 months.

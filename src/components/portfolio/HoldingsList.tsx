@@ -87,7 +87,10 @@ export default function HoldingsList() {
   }
 
   const totalCost = holdings.reduce((s, h) => s + h.buy_price * h.qty, 0);
-  const totalValue = holdings.reduce((s, h) => s + (h.currentPrice ?? h.buy_price) * h.qty, 0);
+  // Only count holdings we can actually price — an unpriced (suspended/thin)
+  // holding shows "—" and no weight per-row, so folding it into equity at cost
+  // would make Total Value disagree with the rows. Excluded consistently.
+  const totalValue = holdings.reduce((s, h) => s + (h.currentPrice !== null ? h.currentPrice * h.qty : 0), 0);
 
   if (loading) return (
     <div className="space-y-3">

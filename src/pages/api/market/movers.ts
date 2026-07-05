@@ -11,7 +11,10 @@ import { createSupabaseAdmin } from '../../../lib/supabase-admin';
 // bot touch. (The coin universe is floored upstream by CRYPTO_MIN_VOLUME.)
 
 const STOCK_MIN_TURNOVER = Number(process.env.STOCK_MIN_TURNOVER ?? 5_000_000);
-const SIGNAL_FRESH_MS = 4 * 60 * 60 * 1000; // mirrors signal_cache TTL
+// Show the latest available signal, not just the last 4h. The refresh runs a
+// couple times a day, so a 4h window blanks every badge most of the day; 24h
+// mirrors the opportunities panel (OPPORTUNITY_FRESH_HOURS). Override via env.
+const SIGNAL_FRESH_MS = Number(process.env.MOVERS_FRESH_HOURS ?? 24) * 3_600_000;
 const CACHE_TTL_MS = 10 * 60 * 1000;
 
 interface Mover {

@@ -15,7 +15,7 @@ function normalize(ticker: string): string {
   return ticker.toUpperCase().replace(/\.PS$/, '').trim();
 }
 
-export async function fetchQuote(ticker: string): Promise<{ price: number; change1d: number; volume: number }> {
+export async function fetchQuote(ticker: string): Promise<{ name: string; price: number; change1d: number; volume: number }> {
   const sym = normalize(ticker);
   for (const host of HOSTS) {
     try {
@@ -24,7 +24,7 @@ export async function fetchQuote(ticker: string): Promise<{ price: number; chang
       const json = await res.json();
       const s = json?.stocks?.[0];
       if (!s) continue;
-      return { price: s.price?.amount ?? 0, change1d: s.percentChange ?? 0, volume: s.volume ?? 0 };
+      return { name: s.name ?? sym, price: s.price?.amount ?? 0, change1d: s.percentChange ?? 0, volume: s.volume ?? 0 };
     } catch {
       // try next host
     }
