@@ -95,23 +95,32 @@ export const POST: APIRoute = async ({ request }) => {
         nextRecordDate: divContext.get(p.ticker)?.nextRecordDate ?? null,
       }));
 
-    // Narrative (cached by exact book + cash).
+    // Narrative (cached by exact book + cash). It's the ONLY AI-dependent part,
+    // so a rate-limited/unavailable provider must NOT take down the whole card —
+    // the actions and dividend context are computed without AI. On failure we
+    // return everything else with narrative: null and let the client note it.
     const key = JSON.stringify({ p: narrativePositions.map((p) => [p.ticker, p.weightPct.toFixed(1), p.pnlPct.toFixed(1), p.verdict]), c: Math.round(cash) });
     let narrative = narrativeCache.get(key);
     if (!narrative || Date.now() - narrative.at > NARRATIVE_TTL_MS) {
-      const result = await analyzePortfolio({ equity: advice.equity, cash: advice.cash, positions: narrativePositions, actions: advice.actions });
-      narrative = { summary: result.summary, provider: result.provider, at: Date.now() };
-      // Bound the cache so a long-running server can't grow it without limit
-      // (each distinct book+cash makes a new key). Drop the oldest insert.
-      if (narrativeCache.size >= NARRATIVE_CACHE_MAX) narrativeCache.delete(narrativeCache.keys().next().value!);
-      narrativeCache.set(key, narrative);
+      try {
+        const result = await analyzePortfolio({ equity: advice.equity, cash: advice.cash, positions: narrativePositions, actions: advice.actions });
+        narrative = { summary: result.summary, provider: result.provider, at: Date.now() };
+        // Bound the cache so a long-running server can't grow it without limit
+        // (each distinct book+cash makes a new key). Drop the oldest insert.
+        if (narrativeCache.size >= NARRATIVE_CACHE_MAX) narrativeCache.delete(narrativeCache.keys().next().value!);
+        narrativeCache.set(key, narrative);
+      } catch (err) {
+        console.warn('Portfolio narrative unavailable (returning actions only):', err);
+        narrative = undefined; // best-effort — fall through with narrative: null
+      }
     }
 
     return json({
       ok: true,
       empty: false,
-      narrative: narrative.summary,
-      provider: narrative.provider,
+      narrative: narrative?.summary ?? null,
+      narrativeUnavailable: !narrative,
+      provider: narrative?.provider ?? null,
       equity: advice.equity,
       cash: advice.cash,
       actions: advice.actions,
