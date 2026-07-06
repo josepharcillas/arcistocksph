@@ -18,6 +18,7 @@ export default function PortfolioInsights() {
   const [error, setError] = useState('');
   const [empty, setEmpty] = useState(false);
   const [narrative, setNarrative] = useState<string | null>(null);
+  const [narrativeUnavailable, setNarrativeUnavailable] = useState(false);
   const [actions, setActions] = useState<Action[]>([]);
   const [positions, setPositions] = useState<Position[]>([]);
   const [loadedAt, setLoadedAt] = useState<Date | null>(null);
@@ -49,6 +50,7 @@ export default function PortfolioInsights() {
 
       setEmpty(!!data.empty);
       setNarrative(data.narrative ?? null);
+      setNarrativeUnavailable(!!data.narrativeUnavailable);
       setActions(data.actions ?? []);
       setPositions(data.positions ?? []);
       setLoadedAt(new Date());
@@ -73,6 +75,13 @@ export default function PortfolioInsights() {
       {narrative && (
         <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-3">
           <p className="text-slate-200 text-sm leading-relaxed">{narrative}</p>
+        </div>
+      )}
+
+      {narrativeUnavailable && (
+        <div className="bg-slate-800/40 border border-slate-700 rounded-xl p-3 mb-3 flex items-center justify-between gap-3">
+          <p className="text-slate-400 text-xs">AI summary is temporarily unavailable (the AI provider is rate-limited). Your recommended actions below are still up to date.</p>
+          <button onClick={load} className="text-slate-300 hover:text-white text-xs font-semibold whitespace-nowrap">Try again</button>
         </div>
       )}
 
