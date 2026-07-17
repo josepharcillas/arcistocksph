@@ -1,6 +1,7 @@
 ---
 import DashboardLayout from '../layouts/DashboardLayout.astro';
 import DipPressureTest from '../components/bounce/DipPressureTest.tsx';
+import DipSparkline from '../components/bounce/DipSparkline.tsx';
 import { getBounceBoard, type BounceRow } from '../lib/bounceBoard';
 
 let rows: BounceRow[] = [];
@@ -87,7 +88,8 @@ const grid = 'grid grid-cols-[minmax(0,1.5fr)_0.8fr_0.7fr_0.8fr_0.8fr_1rem] gap-
               </summary>
 
               <div class="px-3 pb-4 pt-1 bg-slate-900/30 text-sm">
-                <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400 mb-2">
+                <DipSparkline ticker={r.ticker} client:visible />
+                <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400 mb-2 mt-2">
                   <span>Price <span class="text-slate-200 tabular-nums">{peso(r.price)}</span></span>
                   {r.rsi14 != null && <span>RSI <span class="text-slate-200 tabular-nums">{r.rsi14.toFixed(0)}</span></span>}
                   {r.pctFromLow != null && <span>Above low <span class="text-slate-200 tabular-nums">{r.pctFromLow.toFixed(0)}%</span></span>}
