@@ -166,6 +166,138 @@ export function computeAdvice(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Deploy-cash planner — "I have ₱X new cash today, split it for me."
+// Separate from computeAdvice on purpose: the advisor-alerts cron keeps the
+// greedy single-name buy logic, while this planner serves the recurring-deposit
+// (peso-cost-averaging) user by SPREADING a fixed deposit across several names.
+// ---------------------------------------------------------------------------
+
+// PSE board-lot table: the minimum tradeable share increment at a given price.
+// Real orders must be whole multiples of this, so buys round DOWN to it —
+// "buy 37 shares" of a ₱1,250 stock is an unplaceable order.
+export function boardLot(price: number): number {
+  if (price < 0.01) return 1_000_000;
+  if (price < 0.05) return 100_000;
+  if (price < 0.5) return 10_000;
+  if (price < 5) return 1_000;
+  if (price < 50) return 100;
+  if (price < 200) return 10;
+  return 5;
+}
+
+// Dividend blue chips used as the fallback when there are few/no signal BUYs
+// (mirrors the DCA bot's universe — telcos, banks, power, REITs; deliberately
+// skips max-yield cyclicals). Defined here so the client planner can use it
+// without importing the server-only bot module.
+export const DIVIDEND_BLUE_CHIPS = ['TEL', 'GLO', 'BDO', 'BPI', 'MBT', 'AP', 'MER', 'AREIT', 'RCR'];
+
+export interface DeployCandidate {
+  ticker: string;
+  price: number;
+  heldValue: number;                 // peso value already held (0 if none)
+  source: 'signal' | 'dividend';
+  verdict?: Verdict | null;
+  confidence?: Confidence | null;
+}
+
+export interface DeployBuy {
+  ticker: string;
+  shares: number;
+  pesos: number;
+  lotSize: number;
+  source: 'signal' | 'dividend';
+  reason: string;
+}
+
+export interface DeployPlan {
+  deposit: number;
+  deployed: number;
+  leftover: number;
+  buys: DeployBuy[];
+  note: string;
+}
+
+export interface DeployOptions {
+  targetNames?: number;   // how many names to spread across (default 4)
+  maxWeightPct?: number;  // concentration cap vs equity (default from config)
+}
+
+// Turn "I have ₱deposit new cash" into a diversified, board-lot-valid buy list.
+// Spreads across up to targetNames names (signal BUYs first, then dividend blue
+// chips to fill), each capped to a share of the deposit AND to the concentration
+// cap, then tops up leftover into the most-underweight affordable name. Never
+// lumps the whole deposit into one stock; only "holds cash" when literally
+// nothing is affordable within the deposit.
+export function computeDeployPlan(
+  candidates: DeployCandidate[],
+  deposit: number,
+  equity: number,
+  opts: DeployOptions = {},
+): DeployPlan {
+  const targetNames = Math.max(1, opts.targetNames ?? 4);
+  const maxWeightPct = opts.maxWeightPct ?? DEFAULT_ADVISOR_CONFIG.maxWeightPct;
+
+  const lotCostOf = (c: DeployCandidate) => boardLot(c.price) * c.price;
+  const capRoom0 = (c: DeployCandidate) =>
+    equity > 0 ? Math.max(0, (maxWeightPct / 100) * equity - c.heldValue) : Infinity;
+
+  // Only names where at least one whole board lot fits BOTH the deposit and the
+  // concentration cap are buyable — otherwise the slot is wasted on a name we
+  // can never place (e.g. a ₱1,250 stock whose ₱6,250 lot blows the 30% cap).
+  const usable = candidates.filter((c) => c.price > 0 && lotCostOf(c) <= deposit && lotCostOf(c) <= capRoom0(c));
+  // Signal BUYs lead (they cleared the quality gates); then most-underweight
+  // (equal-weight building); then cheapest lot first so we can spread widely.
+  const groupRank = (c: DeployCandidate) => (c.source === 'signal' ? 0 : 1);
+  const ordered = [...usable].sort(
+    (a, b) => groupRank(a) - groupRank(b) || a.heldValue - b.heldValue || lotCostOf(a) - lotCostOf(b),
+  );
+  const selected = ordered.slice(0, targetNames);
+
+  const noneNote = 'Nothing is affordable within this deposit right now — hold the cash for next time.';
+  if (selected.length === 0) {
+    return { deposit, deployed: 0, leftover: deposit, buys: [], note: noneNote };
+  }
+
+  const bought = new Map<string, { shares: number; pesos: number; c: DeployCandidate }>();
+  let remaining = deposit;
+
+  // Round-robin: buy ONE board lot from each selected name per pass, so the
+  // deposit spreads evenly and deploys as fully as board lots + the cap allow,
+  // instead of lumping into the first name or stranding cash.
+  let progressed = true;
+  while (remaining > 0 && progressed) {
+    progressed = false;
+    for (const c of selected) {
+      const lot = boardLot(c.price);
+      const lotCost = lot * c.price;
+      const addedPesos = bought.get(c.ticker)?.pesos ?? 0;
+      const capRoom = equity > 0 ? Math.max(0, (maxWeightPct / 100) * equity - c.heldValue - addedPesos) : Infinity;
+      if (lotCost > remaining || lotCost > capRoom) continue;
+      remaining -= lotCost;
+      const existing = bought.get(c.ticker);
+      if (existing) { existing.shares += lot; existing.pesos += lotCost; }
+      else bought.set(c.ticker, { shares: lot, pesos: lotCost, c });
+      progressed = true;
+    }
+  }
+
+  const buys: DeployBuy[] = [...bought.values()].map(({ shares, pesos, c }) => {
+    const reason = c.source === 'signal'
+      ? `AI BUY signal${c.confidence ? ` (${c.confidence.toLowerCase()} confidence)` : ''} — buy ${shares.toLocaleString('en-PH')} sh for ₱${peso(pesos)}.`
+      : `Dividend blue chip — evens out your holdings. Buy ${shares.toLocaleString('en-PH')} sh for ₱${peso(pesos)}.`;
+    return { ticker: c.ticker, shares, pesos, lotSize: boardLot(c.price), source: c.source, reason };
+  }).sort((a, b) => b.pesos - a.pesos);
+
+  const deployed = buys.reduce((s, b) => s + b.pesos, 0);
+  const leftover = deposit - deployed;
+  const note = buys.length === 0
+    ? noneNote
+    : `Spreads ₱${peso(deployed)} across ${buys.length} name${buys.length === 1 ? '' : 's'}; ₱${peso(leftover)} left as cash (below one board lot).`;
+
+  return { deposit, deployed, leftover, buys, note };
+}
+
 // Headline action = the first real (non-HOLD_CASH) recommendation, used for alert
 // dedup. Returns a stable signature string, or null when the only advice is to hold.
 export function headlineSignature(advice: Advice): string | null {
