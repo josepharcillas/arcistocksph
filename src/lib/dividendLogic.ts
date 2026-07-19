@@ -3,8 +3,15 @@
 // Entry philosophy (2026-07-02 research): dividend investors win by buying
 // solid payers when the yield is fat and the price is washed out — NOT by
 // chasing the single highest yield (often a value trap about to cut). The
-// rating rewards high-but-sane yield, oversold RSI, a non-SELL AI verdict,
-// and a soon upcoming record date; a SELL verdict is an automatic AVOID.
+// rating rewards high-but-sane yield, oversold RSI, an intact uptrend, and a
+// soon upcoming record date.
+//
+// Value-trap guard (2026-07-18 audit): the AVOID gate is based on PRICE/TREND,
+// not the AI SELL verdict. Measured SELL signals turned out to be anti-
+// predictive (price rose ~2.5% after them), so keying AVOID off the verdict
+// steered away from names that then recovered. A genuine trap shows an extreme
+// yield AND a price below its 200-day average — the collapsed price inflating
+// the yield while the market prices in a cut.
 
 export interface DividendRow {
   amount: number;              // per share, PHP
@@ -101,6 +108,7 @@ export interface EntryInput {
   rsi14?: number | null;
   nextRecordDate?: string | null;   // YYYY-MM-DD
   minYieldPct?: number;             // floor to be considered at all (default 4)
+  trapYieldPct?: number;            // yield at/above this + a downtrend = value-trap AVOID (default 12)
   now?: Date;
 }
 
@@ -113,10 +121,17 @@ export interface EntryResult {
 /** Score how attractive an entry looks RIGHT NOW for a dividend stock. */
 export function entryRating(inp: EntryInput): EntryResult {
   const minYield = inp.minYieldPct ?? 4;
+  const trapYield = inp.trapYieldPct ?? 12;
   const reasons: string[] = [];
 
-  if (inp.verdict === 'SELL') {
-    return { rating: 'AVOID', score: 0, reasons: ['AI signal is SELL — high yield may be a value trap (falling price inflates yield)'] };
+  // Value-trap guard — price/trend based, NOT the AI verdict (see file header).
+  // An extreme yield AND a price below the 200-day average is the classic trap:
+  // a collapsing price inflates the yield while the market prices in a cut.
+  if (inp.yieldPct >= trapYield && inp.aboveSma200 === false) {
+    return {
+      rating: 'AVOID', score: 0,
+      reasons: [`Yield ${inp.yieldPct.toFixed(1)}% is extreme AND the price is below its 200-day average — a classic value trap (the falling price inflates the yield; the market may be pricing in a dividend cut).`],
+    };
   }
   if (!(inp.yieldPct >= minYield)) {
     return { rating: 'WAIT', score: 0, reasons: [`Yield ${inp.yieldPct.toFixed(1)}% is below the ${minYield}% threshold`] };

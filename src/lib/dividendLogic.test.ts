@@ -92,9 +92,24 @@ describe('nextUpcomingDividend', () => {
 });
 
 describe('entryRating', () => {
-  it('AVOIDs on a SELL verdict regardless of yield', () => {
-    const r = entryRating({ yieldPct: 12, verdict: 'SELL', rsi14: 30, now: NOW });
+  it('AVOIDs an extreme yield in a downtrend (value trap)', () => {
+    const r = entryRating({ yieldPct: 15, aboveSma200: false, rsi14: 30, now: NOW });
     expect(r.rating).toBe('AVOID');
+  });
+
+  it('does NOT AVOID an extreme yield when the trend is intact (above 200-day)', () => {
+    const r = entryRating({ yieldPct: 15, aboveSma200: true, rsi14: 30, now: NOW });
+    expect(r.rating).not.toBe('AVOID');
+  });
+
+  it('does NOT AVOID a high-but-sane yield below the 200-day average', () => {
+    const r = entryRating({ yieldPct: 8, aboveSma200: false, rsi14: 45, now: NOW });
+    expect(r.rating).not.toBe('AVOID');
+  });
+
+  it('no longer AVOIDs purely on a SELL verdict (SELL signals were anti-predictive)', () => {
+    const r = entryRating({ yieldPct: 8, verdict: 'SELL', aboveSma200: true, rsi14: 40, now: NOW });
+    expect(r.rating).not.toBe('AVOID');
   });
 
   it('WAITs below the yield threshold', () => {
