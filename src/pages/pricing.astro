@@ -1,0 +1,225 @@
+---
+import '../styles/global.css';
+import { PURCHASABLE_PLANS, PLANS, formatPhp } from '../lib/billing/plans';
+import { accessFor } from '../lib/billing/access';
+
+export const prerender = false;
+
+const user = (Astro.locals as any).user as { email?: string } | undefined;
+const access = await accessFor(user);
+const cancelled = Astro.url.searchParams.get('cancelled') === '1';
+
+const monthly = PLANS.pro_monthly;
+const annual = PLANS.pro_annual;
+const annualSaving = monthly.priceCentavos * 12 - annual.priceCentavos;
+
+const freeFeatures = [
+  'Live PSE prices and stock detail pages',
+  'Screener with numeric filters',
+  'Paper trading and the public leaderboard',
+  'Dividend calendar',
+  'Watchlist of up to 5 tickers',
+];
+
+const proFeatures = [
+  'AI buy / sell / hold signals with written rationale',
+  'AI ranking on the screener',
+  'Dip radar',
+  'Dividend alerts before the ex-date',
+  'AI analysis across your whole portfolio',
+  'Push alerts to your phone',
+  'Import holdings from a broker screenshot',
+  'Automated paper-trading bot',
+  'Unlimited watchlist',
+];
+---
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pricing — ArciStocks PH</title>
+    <meta
+      name="description"
+      content="ArciStocks PH pricing. Free forever for prices, the screener and paper trading. Pro adds AI signals, dip radar and dividend alerts. Pay with GCash, Maya or card."
+    />
+  </head>
+  <body class="bg-slate-950 text-white min-h-screen">
+    <main class="max-w-5xl mx-auto px-4 py-10 md:py-16">
+      <a href="/dashboard" class="text-slate-400 text-sm hover:text-white transition-colors">← Back</a>
+
+      <header class="mt-6 mb-10 text-center">
+        <h1 class="text-3xl md:text-4xl font-bold">Pricing</h1>
+        <p class="text-slate-400 mt-3 max-w-xl mx-auto">
+          The prices, screener and paper trading stay free. Pro pays for the
+          parts that cost us money to run — the AI analysis behind the signals.
+        </p>
+      </header>
+
+      {cancelled && (
+        <p class="mb-6 rounded-xl border border-slate-700 bg-slate-900 px-4 py-3 text-sm text-slate-300">
+          Checkout was cancelled. Nothing was charged.
+        </p>
+      )}
+
+      {access.state === 'active' && (
+        <p class="mb-6 rounded-xl border border-green-800 bg-green-950/40 px-4 py-3 text-sm text-green-300">
+          You have Pro until <strong>{new Date(access.expiresAt!).toLocaleDateString('en-PH', { dateStyle: 'long' })}</strong>
+          {' '}({access.daysRemaining} {access.daysRemaining === 1 ? 'day' : 'days'} left).
+          Renewing now adds to the time you have left — it does not reset it.
+        </p>
+      )}
+
+      {access.state === 'expired' && (
+        <p class="mb-6 rounded-xl border border-amber-800 bg-amber-950/40 px-4 py-3 text-sm text-amber-300">
+          Your Pro access ended. Your data is untouched — renewing turns the
+          premium features straight back on.
+        </p>
+      )}
+
+      <div class="grid md:grid-cols-3 gap-4">
+        <!-- Free -->
+        <section class="rounded-2xl border border-slate-800 bg-slate-900/50 p-6 flex flex-col">
+          <h2 class="font-semibold text-lg">Free</h2>
+          <p class="mt-1 text-3xl font-bold">₱0</p>
+          <p class="text-slate-500 text-sm mt-1">Always.</p>
+          <ul class="mt-5 space-y-2 text-sm text-slate-300 flex-1">
+            {freeFeatures.map((f) => (
+              <li class="flex gap-2"><span class="text-slate-600">·</span><span>{f}</span></li>
+            ))}
+          </ul>
+          <p class="mt-5 text-center text-sm text-slate-500 py-2">No account needed to browse</p>
+        </section>
+
+        <!-- Pro, monthly and annual -->
+        {PURCHASABLE_PLANS.map((plan) => (
+          <section
+            class={`rounded-2xl border p-6 flex flex-col ${
+              plan.id === 'pro_annual'
+                ? 'border-green-500 bg-green-950/20 relative'
+                : 'border-slate-800 bg-slate-900/50'
+            }`}
+          >
+            {plan.id === 'pro_annual' && (
+              <span class="absolute -top-3 left-6 bg-green-500 text-slate-950 text-xs font-bold px-2 py-0.5 rounded-full">
+                Best value
+              </span>
+            )}
+            <h2 class="font-semibold text-lg">{plan.name}</h2>
+            <p class="mt-1 text-3xl font-bold">{formatPhp(plan.priceCentavos)}</p>
+            <p class="text-slate-500 text-sm mt-1">
+              {plan.id === 'pro_annual'
+                ? `Saves ${formatPhp(annualSaving)} against renewing monthly`
+                : 'One payment, 30 days of access'}
+            </p>
+
+            <ul class="mt-5 space-y-2 text-sm text-slate-300 flex-1">
+              {proFeatures.map((f) => (
+                <li class="flex gap-2"><span class="text-green-500">✓</span><span>{f}</span></li>
+              ))}
+            </ul>
+
+            <button
+              type="button"
+              data-plan={plan.id}
+              class="buy mt-5 w-full bg-green-500 hover:bg-green-400 disabled:opacity-50 disabled:cursor-not-allowed text-slate-950 font-semibold py-3 rounded-xl transition-colors"
+            >
+              {access.state === 'active' ? 'Extend with this plan' : 'Get Pro'}
+            </button>
+          </section>
+        ))}
+      </div>
+
+      <p id="buy-error" class="mt-4 text-sm text-red-400" hidden></p>
+
+      <section class="mt-12 grid md:grid-cols-2 gap-x-10 gap-y-6 text-sm">
+        <div>
+          <h3 class="font-semibold mb-1">How do I pay?</h3>
+          <p class="text-slate-400">
+            GCash, Maya, GrabPay or any Visa/Mastercard, through PayMongo. Your
+            card details are entered on PayMongo's page and never reach us.
+          </p>
+        </div>
+        <div>
+          <h3 class="font-semibold mb-1">Will I be charged automatically?</h3>
+          <p class="text-slate-400">
+            No. There is no recurring charge and no stored mandate. You buy a
+            fixed period, it expires on a date you can see, and renewing is
+            something you choose to do. We will remind you in the last week.
+          </p>
+        </div>
+        <div>
+          <h3 class="font-semibold mb-1">What if I renew early?</h3>
+          <p class="text-slate-400">
+            The new period is added to what you have left. Renewing with 12 days
+            remaining gives you 42, not 30.
+          </p>
+        </div>
+        <div>
+          <h3 class="font-semibold mb-1">What happens when it expires?</h3>
+          <p class="text-slate-400">
+            The premium features switch off and everything else keeps working.
+            Your holdings, watchlist and paper-trading history are kept, not
+            deleted, and come straight back if you renew.
+          </p>
+        </div>
+        <div>
+          <h3 class="font-semibold mb-1">Refunds</h3>
+          <p class="text-slate-400">
+            If something is broken and we cannot fix it, email us within 7 days
+            of the payment and we will refund it in full. Quote the reference
+            number from your receipt.
+          </p>
+        </div>
+        <div>
+          <h3 class="font-semibold mb-1">Is this financial advice?</h3>
+          <p class="text-slate-400">
+            No. ArciStocks is an educational tool. Signals and AI rationales are
+            not recommendations to buy or sell, and paying for Pro does not
+            change that. See the <a href="/disclaimer" class="underline">disclaimer</a>.
+          </p>
+        </div>
+      </section>
+
+      <p class="text-slate-600 text-xs mt-12 text-center">
+        Prices in Philippine pesos, inclusive of any applicable taxes.
+        Data comes from free, unofficial feeds and may be delayed.
+      </p>
+    </main>
+
+    <script>
+      const err = document.getElementById('buy-error')!;
+
+      document.querySelectorAll<HTMLButtonElement>('button.buy').forEach((btn) => {
+        btn.addEventListener('click', async () => {
+          err.hidden = true;
+          const original = btn.textContent;
+          btn.disabled = true;
+          btn.textContent = 'Starting checkout…';
+
+          try {
+            const res = await fetch('/api/billing/checkout', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ planId: btn.dataset.plan }),
+            });
+            const data = await res.json();
+
+            if (res.status === 401) {
+              // Not signed in: send them to sign in, then straight back here.
+              location.href = '/login?next=/pricing';
+              return;
+            }
+            if (!res.ok) throw new Error(data?.error || 'Could not start checkout.');
+
+            location.href = data.checkoutUrl;
+          } catch (e) {
+            err.textContent = e instanceof Error ? e.message : 'Could not start checkout.';
+            err.hidden = false;
+            btn.disabled = false;
+            btn.textContent = original;
+          }
+        });
+      });
+    </script>
+  </body>
+</html>
