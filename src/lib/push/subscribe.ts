@@ -1,8 +1,7 @@
-import { supabase } from '../supabase';
-
 // Client-side Web Push subscription helpers. The browser's PushManager produces
-// a subscription with { endpoint, keys: { p256dh, auth } }, which maps 1:1 to the
-// push_subscriptions table. RLS lets a signed-in user write only their own rows.
+// a subscription with { endpoint, keys: { p256dh, auth } }; these are posted to
+// the server, which is the only thing that can write push_subscriptions now
+// (the browser has no direct database access any more).
 
 const VAPID_PUBLIC_KEY = import.meta.env.PUBLIC_FCM_VAPID_KEY as string | undefined;
 
@@ -53,20 +52,20 @@ export async function subscribeToPush(): Promise<void> {
     });
   }
 
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) throw new Error('You must be signed in to enable notifications.');
-
   const json = sub.toJSON();
-  const { error } = await supabase.from('push_subscriptions').upsert(
-    {
-      user_id: user.id,
+  const res = await fetch('/api/push/subscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
       endpoint: json.endpoint,
       p256dh: json.keys?.p256dh,
       auth: json.keys?.auth,
-    },
-    { onConflict: 'user_id,endpoint' }
-  );
-  if (error) throw error;
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? 'Could not save your subscription.');
+  }
 }
 
 export async function unsubscribeFromPush(): Promise<void> {
@@ -77,5 +76,9 @@ export async function unsubscribeFromPush(): Promise<void> {
 
   const endpoint = sub.endpoint;
   await sub.unsubscribe();
-  await supabase.from('push_subscriptions').delete().eq('endpoint', endpoint);
+  await fetch('/api/push/unsubscribe', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ endpoint }),
+  });
 }

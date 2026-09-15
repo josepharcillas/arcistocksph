@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import { SkeletonCard } from '../ui/Skeleton';
 import PortfolioSummary from './PortfolioSummary';
 import AddHoldingForm from './AddHoldingForm';
@@ -35,16 +34,21 @@ export default function HoldingsList() {
     setLoading(true);
     setError('');
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (user) {
-      setUserId(user.id);
-      const { data: c } = await supabase.from('portfolio_cash').select('cash').eq('user_id', user.id).maybeSingle();
-      setCash(c ? Number(c.cash) : 0);
+    // Positions and cash now come from the server in one round trip; the
+    // browser has no database access of its own any more.
+    let data: Holding[];
+    try {
+      const res = await fetch('/api/portfolio');
+      if (!res.ok) throw new Error(String(res.status));
+      const payload = await res.json();
+      data = payload.holdings ?? [];
+      setCash(Number(payload.cash) || 0);
+      setUserId(payload.userId ?? null);
+    } catch {
+      setError('Could not load your holdings. Please refresh.');
+      setLoading(false);
+      return;
     }
-
-    const { data, error: err } = await supabase.from('holdings').select('*').order('created_at', { ascending: false });
-    if (err) { setError('Could not load your holdings. Please refresh.'); setLoading(false); return; }
-    if (!data) { setLoading(false); return; }
 
     // Fetch current prices for each holding
     const enriched = await Promise.all(data.map(async (h: Holding) => {
@@ -74,17 +78,18 @@ export default function HoldingsList() {
 
   async function saveCash(next: number) {
     setCash(next);
-    if (!userId) return;
-    await supabase.from('portfolio_cash').upsert(
-      { user_id: userId, cash: next, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id' }
-    );
+    await fetch('/api/portfolio/cash', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cash: next }),
+    }).catch(() => setError('Could not save your cash balance.'));
   }
 
   useEffect(() => { load(); }, []);
 
   async function deleteHolding(id: string) {
-    await supabase.from('holdings').delete().eq('id', id);
+    const res = await fetch(`/api/portfolio/holdings?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) { setError('Could not remove that holding.'); return; }
     setHoldings(prev => prev.filter(h => h.id !== id));
   }
 

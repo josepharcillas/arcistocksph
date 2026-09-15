@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import { SkeletonCard } from '../ui/Skeleton';
 
 interface WatchItem {
@@ -21,14 +20,14 @@ export default function WatchlistManager() {
 
   async function load() {
     setLoading(true);
-    const [{ data: rows }, quoteRes] = await Promise.all([
-      supabase.from('watchlist').select('*').order('created_at', { ascending: false }),
+    const [rows, quoteRes] = await Promise.all([
+      fetch('/api/watchlist').then((r) => (r.ok ? r.json() : [])).catch(() => []),
       fetch('/api/stocks').then((r) => r.json()).catch(() => []),
     ]);
     const map: Record<string, Quote> = {};
     if (Array.isArray(quoteRes)) for (const q of quoteRes) map[q.symbol] = q;
     setQuotes(map);
-    setItems(rows ?? []);
+    setItems(Array.isArray(rows) ? rows : []);
     setLoading(false);
   }
 
@@ -39,27 +38,33 @@ export default function WatchlistManager() {
     setError('');
     const sym = ticker.toUpperCase().replace('.PS', '').trim();
     if (!sym) return;
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setError('You must be signed in.'); return; }
 
-    const { error: err } = await supabase.from('watchlist').insert({
-      user_id: user.id,
-      ticker: sym,
-      company_name: quotes[sym]?.name ?? null,
+    const res = await fetch('/api/watchlist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker: sym, companyName: quotes[sym]?.name ?? null }),
     });
-    if (err) { setError(err.code === '23505' ? `${sym} is already on your watchlist.` : err.message); return; }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError(body.error ?? 'Could not add to watchlist.');
+      return;
+    }
     setTicker('');
     load();
   }
 
   async function remove(id: string) {
-    await supabase.from('watchlist').delete().eq('id', id);
+    await fetch(`/api/watchlist/${id}`, { method: 'DELETE' });
     setItems((prev) => prev.filter((i) => i.id !== id));
   }
 
   async function saveAlert(id: string, field: 'alert_price_above' | 'alert_price_below', value: string) {
     const num = value === '' ? null : parseFloat(value);
-    await supabase.from('watchlist').update({ [field]: num }).eq('id', id);
+    await fetch(`/api/watchlist/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field, value: num }),
+    });
     setItems((prev) => prev.map((i) => (i.id === id ? { ...i, [field]: num } : i)));
   }
 

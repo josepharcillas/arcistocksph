@@ -4,7 +4,7 @@
 //   search.ax (list, date-desc) -> openDiscViewer.do (edge_no -> file_id)
 //   -> downloadHtml.do (the actual form) -> parse -> upsert into `dividends`.
 // Parse functions are pure (HTML string in, fields out) so they're unit-testable.
-import { createSupabaseAdmin } from '../supabase-admin';
+import { query } from '../db';
 
 const BASE = 'https://edge.pse.com.ph';
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)';
@@ -184,7 +184,6 @@ export interface DividendSyncResult {
  *  Incremental (default): walk date-desc pages, stop once a full page is
  *  already known. Backfill: pass `sinceDays` to walk until that cutoff. */
 export async function syncDividends(opts: { sinceDays?: number; maxPages?: number } = {}): Promise<DividendSyncResult> {
-  const admin = createSupabaseAdmin();
   const cutoff = opts.sinceDays ? new Date(Date.now() - opts.sinceDays * 86400_000) : null;
   const maxPages = opts.maxPages ?? (opts.sinceDays ? 80 : 3);
   const fromDate = cutoff ?? undefined;
@@ -197,10 +196,11 @@ export async function syncDividends(opts: { sinceDays?: number; maxPages?: numbe
     if (rows.length === 0) break;
     pagesScanned++;
 
-    const known = new Set(
-      ((await admin.from('dividends').select('edge_no').in('edge_no', rows.map((r) => r.edgeNo))).data ?? [])
-        .map((r: any) => r.edge_no as string),
+    const knownRows = await query<{ edge_no: string }>(
+      `select edge_no from dividends where edge_no = any($1::text[])`,
+      [rows.map((r) => r.edgeNo)]
     );
+    const known = new Set(knownRows.map((r) => r.edge_no));
 
     let newOnPage = 0;
     for (const row of rows) {
@@ -222,32 +222,38 @@ export async function syncDividends(opts: { sinceDays?: number; maxPages?: numbe
         // are what amendments usually move).
         if (row.isAmend) {
           if (d.recordDate) {
-            await admin.from('dividends').delete()
-              .eq('ticker', d.ticker).eq('security_type', d.securityType ?? 'COMMON')
-              .eq('record_date', d.recordDate).neq('edge_no', row.edgeNo);
+            await query(
+              `delete from dividends where ticker = $1 and security_type = $2 and record_date = $3 and edge_no != $4`,
+              [d.ticker, d.securityType ?? 'COMMON', d.recordDate, row.edgeNo]
+            );
           }
-          await admin.from('dividends').delete()
-            .eq('ticker', d.ticker).eq('security_type', d.securityType ?? 'COMMON')
-            .eq('raw_amount', d.rawAmount).neq('edge_no', row.edgeNo)
-            .gte('announced_at', new Date(new Date(row.announcedAt).getTime() - 60 * 86400_000).toISOString());
+          await query(
+            `delete from dividends where ticker = $1 and security_type = $2 and raw_amount = $3
+               and edge_no != $4 and announced_at >= $5`,
+            [d.ticker, d.securityType ?? 'COMMON', d.rawAmount, row.edgeNo,
+              new Date(new Date(row.announcedAt).getTime() - 60 * 86400_000).toISOString()]
+          );
         }
 
-        const { error } = await admin.from('dividends').upsert({
-          edge_no: row.edgeNo,
-          circular_no: d.circularNo ?? row.circularNo,
-          ticker: d.ticker,
-          company_name: d.companyName,
-          amount: amountPhp,
-          raw_amount: d.rawAmount,
-          currency: d.currency,
-          div_type: d.divType,
-          security_type: d.securityType,
-          record_date: d.recordDate,
-          payment_date: d.paymentDate,
-          announced_at: row.announcedAt,
-        });
-        if (error) { errors++; console.warn('[dividends] upsert failed', row.edgeNo, error.message); }
-        else inserted++;
+        try {
+          await query(
+            `insert into dividends
+               (edge_no, circular_no, ticker, company_name, amount, raw_amount, currency,
+                div_type, security_type, record_date, payment_date, announced_at)
+             values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+             on conflict (edge_no) do update set
+               circular_no = excluded.circular_no, ticker = excluded.ticker, company_name = excluded.company_name,
+               amount = excluded.amount, raw_amount = excluded.raw_amount, currency = excluded.currency,
+               div_type = excluded.div_type, security_type = excluded.security_type,
+               record_date = excluded.record_date, payment_date = excluded.payment_date, announced_at = excluded.announced_at`,
+            [row.edgeNo, d.circularNo ?? row.circularNo, d.ticker, d.companyName, amountPhp, d.rawAmount, d.currency,
+              d.divType, d.securityType, d.recordDate, d.paymentDate, row.announcedAt]
+          );
+          inserted++;
+        } catch (err) {
+          errors++;
+          console.warn('[dividends] upsert failed', row.edgeNo, err instanceof Error ? err.message : err);
+        }
       } catch (err) {
         errors++;
         console.warn('[dividends] detail failed', row.edgeNo, err instanceof Error ? err.message : err);

@@ -11,7 +11,8 @@
 // execute. Each run always re-checks HOLDINGS (so exits/trims fire) plus a
 // rotating BATCH of new candidates lacking a fresh cached signal (4h cache).
 
-import { createSupabaseAdmin } from './supabase-admin';
+import { query } from './db';
+import { getOrCreateUser } from './repo';
 import { fetchAllQuotes } from './market';
 import { fetchTopCryptoQuotes, CRYPTO_PREFIX } from './market/crypto';
 import { getOrComputeSignal } from './signals';
@@ -100,20 +101,10 @@ export interface AutoTradeOptions {
 }
 
 interface UniverseEntry { ticker: string; price: number; name: string; symbol: string; id?: string; dayTurnover?: number }
+interface HoldingRow { ticker: string; qty: number; buy_price: number; buy_date: string | null; peak_price: number | null; company_name: string }
 
 const today = () => new Date().toISOString().slice(0, 10);
 const display = (t: string) => t.replace(new RegExp('^' + CRYPTO_PREFIX), '');
-
-async function resolveBotUserId(admin: ReturnType<typeof createSupabaseAdmin>, email: string): Promise<string> {
-  for (let page = 1; page <= 20; page++) {
-    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
-    if (error) throw new Error(`listUsers failed: ${error.message}`);
-    const u = data?.users?.find((x) => x.email === email);
-    if (u) return u.id;
-    if (!data?.users?.length || data.users.length < 200) break;
-  }
-  throw new Error(`Bot user ${email} not found — run: node scripts/seed-bot.mjs`);
-}
 
 async function loadUniverse(assetClass: AssetClass): Promise<UniverseEntry[]> {
   if (assetClass === 'crypto') {
@@ -134,12 +125,13 @@ async function computeSignalFor(assetClass: AssetClass, e: UniverseEntry, log: S
 }
 
 async function logTrade(
-  admin: ReturnType<typeof createSupabaseAdmin>,
   userId: string, ticker: string, action: 'BUY' | 'SELL', qty: number, price: number, name?: string, reason?: string,
 ) {
-  await admin.from('paper_trades').insert({
-    user_id: userId, ticker, company_name: name ?? ticker, action, qty, price, reason: reason ?? null,
-  }).then(({ error }) => { if (error) console.warn('[auto-trade] trade log failed', error.message); });
+  await query(
+    `insert into paper_trades (user_id, ticker, company_name, action, qty, price, reason)
+       values ($1,$2,$3,$4,$5,$6,$7)`,
+    [userId, ticker, name ?? ticker, action, qty, price, reason ?? null]
+  ).catch((err) => console.warn('[auto-trade] trade log failed', err instanceof Error ? err.message : err));
 }
 
 export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTradeResult> {
@@ -151,21 +143,26 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   const defaultBatch = assetClass === 'crypto' ? 6 : 25;
   const batchSize = opts.batchSize ?? Number(process.env.AUTOTRADE_BATCH ?? defaultBatch);
 
-  const admin = createSupabaseAdmin();
-  const botId = await resolveBotUserId(admin, email);
+  const botId = (await getOrCreateUser(email)).id;
 
   // --- Load bot state (+ data the discipline rules need) ---
   const cooldownSince = new Date(Date.now() - config.cooldownDays * 86400000).toISOString();
-  const [{ data: holdingsRows }, { data: cashRow }, { data: recentTrades }, { data: peakSnap }] = await Promise.all([
-    admin.from('holdings').select('ticker, qty, buy_price, buy_date, peak_price, company_name').eq('user_id', botId),
-    admin.from('portfolio_cash').select('cash').eq('user_id', botId).maybeSingle(),
-    admin.from('paper_trades').select('ticker, action, traded_at').eq('user_id', botId).gte('traded_at', cooldownSince),
-    admin.from('balance_snapshots').select('total_value').eq('user_id', botId).order('total_value', { ascending: false }).limit(1),
+  const [holdingsRows, cashRow, recentTrades, peakSnap] = await Promise.all([
+    query<HoldingRow>(`select ticker, qty, buy_price, buy_date, peak_price, company_name from holdings where user_id = $1`, [botId]),
+    query<{ cash: number }>(`select cash from portfolio_cash where user_id = $1`, [botId]).then((r) => r[0] ?? null),
+    query<{ ticker: string; action: string; traded_at: string }>(
+      `select ticker, action, traded_at from paper_trades where user_id = $1 and traded_at >= $2`,
+      [botId, cooldownSince]
+    ),
+    query<{ total_value: number }>(
+      `select total_value from balance_snapshots where user_id = $1 order by total_value desc limit 1`,
+      [botId]
+    ),
   ]);
-  const holdings = (holdingsRows ?? []).map((h: any) => ({
-    ticker: h.ticker as string, qty: Number(h.qty), buy_price: Number(h.buy_price),
-    buy_date: (h.buy_date as string) ?? null, peak_price: h.peak_price != null ? Number(h.peak_price) : null,
-    company_name: (h.company_name as string) ?? h.ticker,
+  const holdings = holdingsRows.map((h) => ({
+    ticker: h.ticker, qty: Number(h.qty), buy_price: Number(h.buy_price),
+    buy_date: h.buy_date ?? null, peak_price: h.peak_price != null ? Number(h.peak_price) : null,
+    company_name: h.company_name ?? h.ticker,
   }));
   let cash = cashRow ? Number(cashRow.cash) : STARTING_CASH;
   const cashBefore = cash;
@@ -174,7 +171,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   const lastSellAt = new Map<string, string>();
   let buysToday = 0;
   const dayStart = today();
-  for (const t of (recentTrades ?? []) as { ticker: string; action: string; traded_at: string }[]) {
+  for (const t of recentTrades) {
     if (t.action === 'SELL') {
       const prev = lastSellAt.get(t.ticker);
       if (!prev || t.traded_at > prev) lastSellAt.set(t.ticker, t.traded_at);
@@ -182,7 +179,7 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
       buysToday++;
     }
   }
-  const peakEquity = peakSnap?.[0] ? Number(peakSnap[0].total_value) : STARTING_CASH;
+  const peakEquity = peakSnap[0] ? Number(peakSnap[0].total_value) : STARTING_CASH;
 
   // --- Live universe (one bulk call) ---
   const universe = await loadUniverse(assetClass);
@@ -200,9 +197,10 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   //        trades) + a uniform-random CONTROL arm (unbiased sample for the
   //        accuracy tracker; also audits below-floor names without ever
   //        surfacing them — the buy gate still blocks those).
-  const { data: cacheRows } = await admin
-    .from('signal_cache').select('ticker, verdict, confidence, stop_loss, above_sma200, turnover20d, computed_at');
-  const cacheMap = new Map<string, any>((cacheRows ?? []).map((r: any) => [r.ticker, r]));
+  const cacheRows = await query<any>(
+    `select ticker, verdict, confidence, stop_loss, above_sma200, turnover20d, computed_at from signal_cache`
+  );
+  const cacheMap = new Map<string, any>(cacheRows.map((r: any) => [r.ticker, r]));
   const isFresh = (t: string) => {
     const c = cacheMap.get(t);
     return c && Date.now() - new Date(c.computed_at).getTime() < FRESH_MS;
@@ -269,10 +267,12 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   }
   const histMap = new Map<string, SignalRecord[]>();
   if (interesting.size > 0) {
-    const { data: histRows } = await admin
-      .from('signal_history').select('ticker, verdict, created_at')
-      .in('ticker', [...interesting]).order('created_at', { ascending: false }).limit(interesting.size * 10);
-    for (const r of (histRows ?? []) as { ticker: string; verdict: string; created_at: string }[]) {
+    const histRows = await query<{ ticker: string; verdict: string; created_at: string }>(
+      `select ticker, verdict, created_at from signal_history
+         where ticker = any($1::text[]) order by created_at desc limit $2`,
+      [[...interesting], interesting.size * 10]
+    );
+    for (const r of histRows) {
       const arr = histMap.get(r.ticker) ?? [];
       if (arr.length < 10) arr.push({ verdict: r.verdict, created_at: r.created_at });
       histMap.set(r.ticker, arr);
@@ -292,9 +292,9 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     // Track the post-entry peak for the trailing stop (persist best-effort).
     const peak = Math.max(h.peak_price ?? h.buy_price, p);
     if (peak !== h.peak_price) {
-      await admin.from('holdings').update({ peak_price: peak }).eq('user_id', botId).eq('ticker', h.ticker);
+      await query(`update holdings set peak_price = $1 where user_id = $2 and ticker = $3`, [peak, botId, h.ticker]);
       h.peak_price = peak;
-      const held = byTicker.get(h.ticker); if (held) held.peak_price = peak;
+      const heldRow = byTicker.get(h.ticker); if (heldRow) heldRow.peak_price = peak;
     }
 
     const gatedVerdict = sig?.verdict === 'SELL' && holdElapsed(h.buy_date, config.minHoldDays) && confirmed(h.ticker, 'SELL')
@@ -306,10 +306,10 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
     const net = p * (1 - fees.sellPct); // price received after selling fee
     const proceeds = h.qty * net;
     cash += proceeds;
-    await admin.from('holdings').delete().eq('user_id', botId).eq('ticker', h.ticker);
+    await query(`delete from holdings where user_id = $1 and ticker = $2`, [botId, h.ticker]);
     byTicker.delete(h.ticker);
     const exitReasonText = `${why === 'SELL signal' ? 'confirmed SELL signal' : why} — sold all ${h.qty} unit(s) at ₱${p.toFixed(2)} (${pl >= 0 ? '+' : ''}${pl.toFixed(0)}% vs cost).`;
-    await logTrade(admin, botId, h.ticker, 'SELL', h.qty, net, h.company_name, exitReasonText);
+    await logTrade(botId, h.ticker, 'SELL', h.qty, net, h.company_name, exitReasonText);
     sellActions.push({
       kind: 'EXIT', ticker: display(h.ticker), shares: h.qty, pesos: proceeds,
       reason: exitReasonText,
@@ -377,14 +377,21 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
       if (ex) {
         const { qty: newQty, avgCost: newAvg } = addToPosition(ex.qty, ex.buy_price, shares, effPrice);
         const newPeak = Math.max(ex.peak_price ?? ex.buy_price, effPrice);
-        await admin.from('holdings').update({ qty: newQty, buy_price: newAvg, peak_price: newPeak }).eq('user_id', botId).eq('ticker', a.ticker);
+        await query(
+          `update holdings set qty = $1, buy_price = $2, peak_price = $3 where user_id = $4 and ticker = $5`,
+          [newQty, newAvg, newPeak, botId, a.ticker]
+        );
         ex.qty = newQty; ex.buy_price = newAvg; ex.peak_price = newPeak;
       } else {
         const name = uni.get(a.ticker)?.name ?? display(a.ticker);
-        await admin.from('holdings').insert({ user_id: botId, ticker: a.ticker, company_name: name, qty: shares, buy_price: effPrice, buy_date: today(), peak_price: effPrice });
+        await query(
+          `insert into holdings (user_id, ticker, company_name, qty, buy_price, buy_date, peak_price)
+             values ($1,$2,$3,$4,$5,$6,$7)`,
+          [botId, a.ticker, name, shares, effPrice, today(), effPrice]
+        );
         byTicker.set(a.ticker, { ticker: a.ticker, qty: shares, buy_price: effPrice, buy_date: today(), peak_price: effPrice, company_name: name });
       }
-      await logTrade(admin, botId, a.ticker, 'BUY', shares, effPrice, uni.get(a.ticker)?.name, a.reason);
+      await logTrade(botId, a.ticker, 'BUY', shares, effPrice, uni.get(a.ticker)?.name, a.reason);
       a.ticker = display(a.ticker); a.shares = shares; a.pesos = cost;
     } else if (a.kind === 'TRIM' && a.ticker && a.shares) {
       const ex = byTicker.get(a.ticker);
@@ -393,13 +400,13 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
       cash += a.shares * net;
       const newQty = ex.qty - a.shares;
       if (newQty <= 0.0001) {
-        await admin.from('holdings').delete().eq('user_id', botId).eq('ticker', a.ticker);
+        await query(`delete from holdings where user_id = $1 and ticker = $2`, [botId, a.ticker]);
         byTicker.delete(a.ticker);
       } else {
-        await admin.from('holdings').update({ qty: newQty }).eq('user_id', botId).eq('ticker', a.ticker);
+        await query(`update holdings set qty = $1 where user_id = $2 and ticker = $3`, [newQty, botId, a.ticker]);
         ex.qty = newQty;
       }
-      await logTrade(admin, botId, a.ticker, 'SELL', a.shares, net, ex.company_name, a.reason);
+      await logTrade(botId, a.ticker, 'SELL', a.shares, net, ex.company_name, a.reason);
       a.ticker = display(a.ticker);
     }
   }
@@ -411,16 +418,21 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
   const actions = [...sellActions, ...advActions];
 
   // --- Persist cash, snapshot equity ---
-  await admin.from('portfolio_cash').upsert({ user_id: botId, cash, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+  await query(
+    `insert into portfolio_cash (user_id, cash, updated_at) values ($1, $2, now())
+       on conflict (user_id) do update set cash = excluded.cash, updated_at = now()`,
+    [botId, cash]
+  );
 
   const finalHoldings = [...byTicker.values()].map((h) => {
     const p = price(h.ticker) || h.buy_price;
     return { ticker: display(h.ticker), qty: h.qty, avgCost: h.buy_price, price: p, value: h.qty * p };
   });
   const equity = cash + finalHoldings.reduce((s, h) => s + h.value, 0);
-  await admin.from('balance_snapshots').upsert(
-    { user_id: botId, snapshot_date: today(), total_value: equity },
-    { onConflict: 'user_id,snapshot_date' },
+  await query(
+    `insert into balance_snapshots (user_id, snapshot_date, total_value) values ($1, $2, $3)
+       on conflict (user_id, snapshot_date) do update set total_value = excluded.total_value`,
+    [botId, today(), equity]
   );
 
   return {
@@ -434,18 +446,17 @@ export async function runAutoTrade(opts: AutoTradeOptions = {}): Promise<AutoTra
 
 // Read-only snapshot of a bot's current state + equity curve (no trading).
 export async function getBotState(assetClass: AssetClass = 'stock') {
-  const admin = createSupabaseAdmin();
   const email = assetClass === 'crypto' ? CRYPTO_BOT_EMAIL : STOCK_BOT_EMAIL;
-  const botId = await resolveBotUserId(admin, email);
-  const [{ data: holdings }, { data: cashRow }, { data: snaps }, { data: trades }] = await Promise.all([
-    admin.from('holdings').select('ticker, qty, buy_price, company_name').eq('user_id', botId),
-    admin.from('portfolio_cash').select('cash').eq('user_id', botId).maybeSingle(),
-    admin.from('balance_snapshots').select('snapshot_date, total_value').eq('user_id', botId).order('snapshot_date'),
-    admin.from('paper_trades').select('ticker, action, qty, price, traded_at').eq('user_id', botId).order('traded_at', { ascending: false }).limit(50),
+  const botId = (await getOrCreateUser(email)).id;
+  const [holdings, cashRow, snaps, trades] = await Promise.all([
+    query<any>(`select ticker, qty, buy_price, company_name from holdings where user_id = $1`, [botId]),
+    query<{ cash: number }>(`select cash from portfolio_cash where user_id = $1`, [botId]).then((r) => r[0] ?? null),
+    query<any>(`select snapshot_date, total_value from balance_snapshots where user_id = $1 order by snapshot_date`, [botId]),
+    query<any>(`select ticker, action, qty, price, traded_at from paper_trades where user_id = $1 order by traded_at desc limit 50`, [botId]),
   ]);
   const universe = await loadUniverse(assetClass).catch(() => [] as UniverseEntry[]);
   const priceMap = new Map(universe.map((e) => [e.ticker, e.price]));
-  const hs = (holdings ?? []).map((h: any) => {
+  const hs = holdings.map((h: any) => {
     const p = priceMap.get(h.ticker) ?? Number(h.buy_price);
     return { ticker: display(h.ticker), qty: Number(h.qty), avgCost: Number(h.buy_price), price: p, value: Number(h.qty) * p };
   });
@@ -457,7 +468,7 @@ export async function getBotState(assetClass: AssetClass = 'stock') {
     startingCash: STARTING_CASH,
     config: assetClass === 'crypto' ? CRYPTO_CONFIG : BOT_CONFIG,
     fees: assetClass === 'crypto' ? CRYPTO_FEES : STOCK_FEES,
-    equityCurve: (snaps ?? []).map((s: any) => ({ date: s.snapshot_date, value: Number(s.total_value) })),
-    recentTrades: (trades ?? []).map((t: any) => ({ ...t, ticker: display(t.ticker) })),
+    equityCurve: snaps.map((s: any) => ({ date: s.snapshot_date, value: Number(s.total_value) })),
+    recentTrades: trades.map((t: any) => ({ ...t, ticker: display(t.ticker) })),
   };
 }

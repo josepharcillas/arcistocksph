@@ -1,12 +1,12 @@
 /**
  * Billing persistence.
  *
- * Service-role only. `subscriptions` and `billing_events` have RLS enabled with
- * no policies, so the anon key cannot read or write them at all — never import
- * this module into a React component.
+ * Server-only. The `subscriptions` and `billing_events` tables are reachable
+ * only from this app server (Postgres sits on the private `net_data` network
+ * with no published port) — never import this module into a React component.
  */
 
-import { createSupabaseAdmin } from "../supabase-admin";
+import { query, queryOne } from "../db";
 import { extendedExpiry, type SubscriptionRecord } from "./entitlements";
 import { planById, type PlanId } from "./plans";
 
@@ -15,17 +15,15 @@ function key(email: string): string {
   return email.trim().toLowerCase();
 }
 
-export async function getSubscription(email: string): Promise<SubscriptionRecord | null> {
-  const db = createSupabaseAdmin();
-  const { data, error } = await db
-    .from("subscriptions")
-    .select("email, plan_id, tier, expires_at, last_payment_ref")
-    .eq("email", key(email))
-    .maybeSingle();
+interface SubRow {
+  email: string; plan_id: string; tier: string; expires_at: string; last_payment_ref: string | null;
+}
 
-  // A read failure must not look like "not subscribed" to the caller, or a
-  // transient database blip silently downgrades a paying customer mid-session.
-  if (error) throw new Error(`subscription lookup failed: ${error.message}`);
+export async function getSubscription(email: string): Promise<SubscriptionRecord | null> {
+  const data = await queryOne<SubRow>(
+    `select email, plan_id, tier, expires_at, last_payment_ref from subscriptions where email = $1`,
+    [key(email)]
+  );
   if (!data) return null;
 
   return {
@@ -56,51 +54,45 @@ export async function applyPurchase(opts: {
   const plan = planById(opts.planId);
   if (!plan || !plan.purchasable) throw new Error(`plan ${opts.planId} is not purchasable`);
 
-  const db = createSupabaseAdmin();
   const email = key(opts.email);
 
-  const claim = await db.from("billing_events").insert({
-    event_id: opts.eventId,
-    event_type: opts.eventType,
-    email,
-    plan_id: opts.planId,
-    amount_centavos: opts.amountCentavos,
-  });
-
-  if (claim.error) {
+  try {
+    await query(
+      `insert into billing_events (event_id, event_type, email, plan_id, amount_centavos)
+         values ($1, $2, $3, $4, $5)`,
+      [opts.eventId, opts.eventType, email, opts.planId, opts.amountCentavos]
+    );
+  } catch (err: any) {
     // 23505 is unique_violation: this event has already been applied. That is
     // the expected outcome of a provider retry, not a failure — say so and
     // return 2xx, or the provider retries forever.
-    if (claim.error.code === "23505") {
+    if (err?.code === "23505") {
       const existing = await getSubscription(email);
       return { applied: false, expiresAt: existing?.expiresAt ?? null };
     }
-    throw new Error(`could not record billing event: ${claim.error.message}`);
+    throw new Error(`could not record billing event: ${err instanceof Error ? err.message : err}`);
   }
 
   const existing = await getSubscription(email);
   const expiresAt = extendedExpiry(existing?.expiresAt ?? null, opts.planId, opts.now ?? new Date());
 
-  const { error } = await db.from("subscriptions").upsert(
-    {
-      email,
-      plan_id: opts.planId,
-      tier: plan.tier,
-      expires_at: expiresAt,
-      last_payment_ref: opts.paymentRef,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: "email" },
-  );
-
-  if (error) {
+  try {
+    await query(
+      `insert into subscriptions (email, plan_id, tier, expires_at, last_payment_ref, updated_at)
+         values ($1, $2, $3, $4, $5, now())
+       on conflict (email) do update set
+         plan_id = excluded.plan_id, tier = excluded.tier, expires_at = excluded.expires_at,
+         last_payment_ref = excluded.last_payment_ref, updated_at = now()`,
+      [email, opts.planId, plan.tier, expiresAt, opts.paymentRef]
+    );
+  } catch (err) {
     // The event is recorded but access was not granted — the worst state to
     // leave quiet, because the customer has paid and the retry will now be
     // treated as a duplicate. Loud enough to find in the logs.
     console.error(
-      `[billing] PAID BUT NOT GRANTED — event ${opts.eventId}, ${email}, ${opts.planId}: ${error.message}`,
+      `[billing] PAID BUT NOT GRANTED — event ${opts.eventId}, ${email}, ${opts.planId}: ${err instanceof Error ? err.message : err}`,
     );
-    throw new Error(`could not grant access: ${error.message}`);
+    throw new Error(`could not grant access: ${err instanceof Error ? err.message : err}`);
   }
 
   return { applied: true, expiresAt };

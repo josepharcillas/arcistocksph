@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseAdmin } from '../../../lib/supabase-admin';
+import { query } from '../../../lib/db';
 
 // New-entry candidates for the advisor: PSE stocks with a FRESH cached BUY
 // signal that clear every quality gate the panel agreed on — MEDIUM+ confidence,
@@ -19,18 +19,17 @@ const confRank = (c: string | null): number => (c === 'HIGH' ? 3 : c === 'MEDIUM
 
 export const GET: APIRoute = async ({ url }) => {
   try {
-    const admin = createSupabaseAdmin();
     const freshHours = Math.max(1, Number(url.searchParams.get('freshHours') ?? DEFAULT_FRESH_HOURS));
     const freshCutoff = new Date(Date.now() - freshHours * 3_600_000).toISOString();
-    const { data } = await admin
-      .from('signal_cache')
-      .select('ticker, verdict, confidence, stop_loss, turnover20d, above_sma200, computed_at')
-      .eq('verdict', 'BUY')
-      .gte('computed_at', freshCutoff)
-      .not('turnover20d', 'is', null)
-      .gte('turnover20d', STOCK_MIN_TURNOVER);
+    const data = await query<any>(
+      `select ticker, verdict, confidence, stop_loss, turnover20d, above_sma200, computed_at
+         from signal_cache
+        where verdict = 'BUY' and computed_at >= $1
+          and turnover20d is not null and turnover20d >= $2`,
+      [freshCutoff, STOCK_MIN_TURNOVER]
+    );
 
-    const candidates = (data ?? [])
+    const candidates = data
       .filter((s: any) =>
         !s.ticker.includes(':')          // crypto is the crypto bot's world, not the PSE advisor's
         && confRank(s.confidence) >= 2   // MEDIUM+ only

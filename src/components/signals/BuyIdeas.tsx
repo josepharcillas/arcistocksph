@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '../../lib/supabase';
 import { computeAdvice, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition, type Confidence, type Verdict } from '../../lib/advisor';
 import { SkeletonCard } from '../ui/Skeleton';
 
@@ -25,11 +24,10 @@ export default function BuyIdeas() {
   async function load() {
     setLoading(true); setError('');
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      const [oppRes, quotes, cashRow] = await Promise.all([
+      const [oppRes, quotes, portfolioRes] = await Promise.all([
         fetch('/api/advisor/opportunities').then((r) => (r.ok ? r.json() : { candidates: [] })).catch(() => ({ candidates: [] })),
         fetch('/api/stocks').then((r) => (r.ok ? r.json() : [])).catch(() => []),
-        user ? supabase.from('portfolio_cash').select('cash').eq('user_id', user.id).maybeSingle() : Promise.resolve({ data: null }),
+        fetch('/api/portfolio').then((r) => (r.ok ? r.json() : null)).catch(() => null),
       ]);
 
       const priceMap: Record<string, number> = {};
@@ -45,7 +43,7 @@ export default function BuyIdeas() {
         .filter((c) => c.price > 0);
       setCandidates(cands);
 
-      const cash = (cashRow as any)?.data ? Number((cashRow as any).data.cash) : 0;
+      const cash = portfolioRes?.cash ? Number(portfolioRes.cash) : 0;
       if (cash > 0) setBudget(cash);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not load buy ideas.');

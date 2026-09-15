@@ -1,4 +1,4 @@
-import type { createSupabaseAdmin } from './supabase-admin';
+import { query } from './db';
 import { fetchAllQuotes } from './market';
 
 export const START_BALANCE = 100000;
@@ -42,17 +42,12 @@ export function aggregateStandings(
 
 // Current standings for every opted-in user. Shared by the leaderboard API and
 // the daily snapshot cron.
-export async function computeStandings(admin: ReturnType<typeof createSupabaseAdmin>): Promise<Standing[]> {
-  const [{ data: profiles }, { data: balances }, { data: trades }, quotes] = await Promise.all([
-    admin.from('profiles').select('id, display_name').eq('leaderboard_opt_in', true),
-    admin.from('paper_balances').select('user_id, balance'),
-    admin.from('paper_trades').select('user_id, ticker, action, qty, price'),
+export async function computeStandings(): Promise<Standing[]> {
+  const [profiles, balances, trades, quotes] = await Promise.all([
+    query<LbProfile>(`select id, display_name from profiles where leaderboard_opt_in = true`),
+    query<LbBalance>(`select user_id, balance from paper_balances`),
+    query<LbTrade>(`select user_id, ticker, action, qty, price from paper_trades`),
     fetchAllQuotes().catch(() => new Map()),
   ]);
-  return aggregateStandings(
-    (profiles ?? []) as LbProfile[],
-    (balances ?? []) as LbBalance[],
-    (trades ?? []) as LbTrade[],
-    quotes as Map<string, { price: number }>
-  );
+  return aggregateStandings(profiles, balances, trades, quotes as Map<string, { price: number }>);
 }

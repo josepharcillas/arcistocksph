@@ -1,49 +1,38 @@
--- ArciStocks PH — Supabase Schema
--- Run this in the Supabase SQL editor
+-- ArciStocks PH — Postgres schema
+--
+-- Runs on the arcitools home stack's shared Postgres (`arcitools-postgres-1`),
+-- database `stocks`. Apply with:
+--   docker exec -i arcitools-postgres-1 psql -U arcitools -d stocks < docs/schema.sql
+--
+-- Formerly a hosted-Supabase schema. Three things changed when that project was
+-- deleted and the app moved in-house:
+--
+--  * No RLS, no policies, no role grants. Supabase let the BROWSER talk to
+--    Postgres directly, so row-level security was the only thing standing
+--    between one user's rows and another's. Here Postgres sits on `net_data`
+--    with no published port, reachable only by the app server, which scopes
+--    every query to the session's user. The trust boundary moved from the
+--    database to the API layer.
+--  * `user_id` is the verified Google email (text), not an `auth.users` uuid.
+--    There is no auth schema to reference any more, and an email survives a
+--    database rebuild — which, given how we got here, is the point.
+--  * No signup trigger. `profiles` rows are created by the app on first sign-in.
 
--- Enable UUID extension
-create extension if not exists "uuid-ossp";
+-- gen_random_uuid() is built in from PG13; no uuid-ossp needed.
 
--- Profiles (auto-created on first login via trigger)
-create table profiles (
-  id uuid references auth.users on delete cascade primary key,
+-- One row per person who has ever signed in. Created on first sign-in.
+create table if not exists profiles (
+  id text primary key,              -- verified Google email, lowercased
   display_name text,
   avatar_url text,
   leaderboard_opt_in boolean default false,
   created_at timestamptz default now()
 );
-alter table profiles enable row level security;
-create policy "Users can view own profile" on profiles for select using (auth.uid() = id);
-create policy "Users can update own profile" on profiles for update using (auth.uid() = id);
-
--- Auto-create profile on signup.
--- NOTE: must schema-qualify `public.profiles` AND pin search_path — the GoTrue
--- auth connection does not have `public` on its search_path, so an unqualified
--- reference makes signup fail with "Database error creating new user".
-create or replace function public.handle_new_user()
-returns trigger
-language plpgsql
-security definer
-set search_path = public
-as $$
-begin
-  insert into public.profiles (id, display_name, avatar_url)
-  values (
-    new.id,
-    new.raw_user_meta_data->>'full_name',
-    new.raw_user_meta_data->>'avatar_url'
-  );
-  return new;
-end;
-$$;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute procedure handle_new_user();
 
 -- Holdings (real portfolio)
-create table holdings (
-  id uuid default uuid_generate_v4() primary key,
-  user_id uuid references auth.users on delete cascade not null,
+create table if not exists holdings (
+  id uuid default gen_random_uuid() primary key,
+  user_id text references profiles on delete cascade not null,
   ticker text not null,
   company_name text,
   qty numeric not null check (qty > 0),
@@ -53,23 +42,20 @@ create table holdings (
   notes text,
   created_at timestamptz default now()
 );
-alter table holdings enable row level security;
-create policy "Users manage own holdings" on holdings using (auth.uid() = user_id);
+create index if not exists holdings_user_idx on holdings (user_id);
 
 -- Real-portfolio cash balance (so the portfolio can show Total Account Equity =
 -- cash + holdings value, like a broker). Editable by the user.
-create table portfolio_cash (
-  user_id uuid references auth.users on delete cascade primary key,
+create table if not exists portfolio_cash (
+  user_id text references profiles on delete cascade primary key,
   cash numeric not null default 0,
   updated_at timestamptz default now()
 );
-alter table portfolio_cash enable row level security;
-create policy "Users manage own portfolio cash" on portfolio_cash using (auth.uid() = user_id);
 
 -- Watchlist
-create table watchlist (
-  id uuid default uuid_generate_v4() primary key,
-  user_id uuid references auth.users on delete cascade not null,
+create table if not exists watchlist (
+  id uuid default gen_random_uuid() primary key,
+  user_id text references profiles on delete cascade not null,
   ticker text not null,
   company_name text,
   alert_price_above numeric,
@@ -78,83 +64,68 @@ create table watchlist (
   created_at timestamptz default now(),
   unique(user_id, ticker)
 );
-alter table watchlist enable row level security;
-create policy "Users manage own watchlist" on watchlist using (auth.uid() = user_id);
 
--- Paper trading balances (₱100,000 default)
-create table paper_balances (
-  user_id uuid references auth.users on delete cascade primary key,
+-- Paper trading balances (PHP 100,000 default)
+create table if not exists paper_balances (
+  user_id text references profiles on delete cascade primary key,
   balance numeric not null default 100000,
   updated_at timestamptz default now()
 );
-alter table paper_balances enable row level security;
-create policy "Users manage own paper balance" on paper_balances using (auth.uid() = user_id);
 
 -- Paper trades log
-create table paper_trades (
-  id uuid default uuid_generate_v4() primary key,
-  user_id uuid references auth.users on delete cascade not null,
+create table if not exists paper_trades (
+  id uuid default gen_random_uuid() primary key,
+  user_id text references profiles on delete cascade not null,
   ticker text not null,
   company_name text,
   action text not null check (action in ('BUY', 'SELL')),
   qty numeric not null check (qty > 0),
   price numeric not null check (price > 0),
   total numeric generated always as (qty * price) stored,
-  reason text, -- bot decision rationale (null for manual user trades); powers the /dashboard/bots log
+  reason text, -- bot decision rationale (null for manual user trades); powers /dashboard/bots
   traded_at timestamptz default now()
 );
--- Migration from older schema:
---   alter table paper_trades add column if not exists reason text;
-alter table paper_trades enable row level security;
-create policy "Users manage own paper trades" on paper_trades using (auth.uid() = user_id);
+create index if not exists paper_trades_user_idx on paper_trades (user_id, traded_at desc);
 
 -- Daily portfolio-value snapshots (powers leaderboard week/month returns).
 -- Written server-side by the snapshot cron; one row per user per day.
-create table balance_snapshots (
-  user_id uuid references auth.users on delete cascade not null,
+create table if not exists balance_snapshots (
+  user_id text references profiles on delete cascade not null,
   snapshot_date date not null,
   total_value numeric not null,
   primary key (user_id, snapshot_date)
 );
-alter table balance_snapshots enable row level security;
-create policy "Users read own snapshots" on balance_snapshots for select using (auth.uid() = user_id);
 
 -- Push notification subscriptions
-create table push_subscriptions (
-  id uuid default uuid_generate_v4() primary key,
-  user_id uuid references auth.users on delete cascade not null,
+create table if not exists push_subscriptions (
+  id uuid default gen_random_uuid() primary key,
+  user_id text references profiles on delete cascade not null,
   endpoint text not null,
   p256dh text not null,
   auth text not null,
   created_at timestamptz default now(),
   unique(user_id, endpoint)
 );
-alter table push_subscriptions enable row level security;
-create policy "Users manage own push subs" on push_subscriptions using (auth.uid() = user_id);
 
 -- Per-stock push opt-out. Absence of a row = opted in (default on). A row with
 -- enabled = false suppresses alerts for that ticker.
-create table push_preferences (
-  user_id uuid references auth.users on delete cascade not null,
+create table if not exists push_preferences (
+  user_id text references profiles on delete cascade not null,
   ticker text not null,
   enabled boolean not null default true,
   primary key (user_id, ticker)
 );
-alter table push_preferences enable row level security;
-create policy "Users manage own push prefs" on push_preferences using (auth.uid() = user_id);
 
 -- Dedup state for advisor push alerts: the last headline-action signature pushed
 -- to each user, so the advisor-alerts cron only notifies on a *change*.
-create table advisor_alert_state (
-  user_id uuid references auth.users on delete cascade primary key,
+create table if not exists advisor_alert_state (
+  user_id text references profiles on delete cascade primary key,
   signature text,
   updated_at timestamptz default now()
 );
-alter table advisor_alert_state enable row level security;
-create policy "Users read own advisor alert state" on advisor_alert_state for select using (auth.uid() = user_id);
 
--- Signal cache (avoid re-calling AI on every visit)
-create table signal_cache (
+-- Signal cache (avoid re-calling AI on every visit). Shared across all users.
+create table if not exists signal_cache (
   ticker text primary key,
   verdict text not null check (verdict in ('BUY', 'SELL', 'HOLD')),
   confidence text not null,
@@ -163,23 +134,17 @@ create table signal_cache (
   stop_loss numeric,
   provider text,
   above_sma200 boolean, -- price > 200-day SMA at signal time (bot trend filter)
-  turnover20d numeric,  -- median daily peso value traded (~20 sessions) — liquidity floor for bot/advisor
+  turnover20d numeric,  -- median daily peso value traded (~20 sessions) — liquidity floor
   rsi14 numeric,        -- 14-day RSI at signal time (dividend tracker entry rating)
   pct_from_low numeric, -- % above the trailing (~52wk) low at signal time (Dip Radar washout)
   macd_hist numeric,    -- MACD histogram at signal time (Dip Radar momentum turn)
   computed_at timestamptz default now()
 );
--- No RLS — signal cache is public read, server-only write
--- Migration from older schema:
---   alter table signal_cache add column if not exists turnover20d numeric;
---   alter table signal_cache add column if not exists rsi14 numeric;
---   alter table signal_cache add column if not exists pct_from_low numeric;
---   alter table signal_cache add column if not exists macd_hist numeric;
 
 -- Signal history — append-only log of every fresh signal + the price at the time,
--- so we can measure how accurate the signals turned out to be (see /api/signals/accuracy).
-create table signal_history (
-  id uuid default uuid_generate_v4() primary key,
+-- so we can measure how accurate the signals turned out to be (/api/signals/accuracy).
+create table if not exists signal_history (
+  id uuid default gen_random_uuid() primary key,
   ticker text not null,
   verdict text not null check (verdict in ('BUY', 'SELL', 'HOLD')),
   confidence text not null,
@@ -189,19 +154,12 @@ create table signal_history (
   turnover20d numeric, -- liquidity at signal time, so accuracy can be decomposed by tier
   created_at timestamptz default now()
 );
--- Migration from older schema:
---   alter table signal_history add column if not exists source text;
---   alter table signal_history add column if not exists arm text;
---   alter table signal_history add column if not exists turnover20d numeric;
-alter table signal_history enable row level security;
--- Public may read the stats; only the server (service_role, bypasses RLS) writes.
-create policy "Public read signal history" on signal_history for select using (true);
-create index signal_history_created_idx on signal_history (created_at);
+create index if not exists signal_history_created_idx on signal_history (created_at);
 
 -- Cash dividend declarations scraped from PSE Edge (Disclosure Form 6-1).
 -- Feeds the /dividends tracker (TTM-yield ranking + entry ratings) and the DCA
--- bot's dividend crediting. Server-only writes (service_role); public read.
-create table dividends (
+-- bot's dividend crediting.
+create table if not exists dividends (
   edge_no text primary key,     -- PSE Edge disclosure id (dedup key)
   circular_no text,             -- e.g. C05077-2026
   ticker text not null,
@@ -216,39 +174,23 @@ create table dividends (
   announced_at timestamptz,     -- disclosure announce time
   created_at timestamptz default now()
 );
-create index dividends_ticker_record_idx on dividends (ticker, record_date);
-create index dividends_payment_idx on dividends (payment_date);
--- No RLS — public read, server-only write (like signal_cache)
+create index if not exists dividends_ticker_record_idx on dividends (ticker, record_date);
+create index if not exists dividends_payment_idx on dividends (payment_date);
 
 -- Dedup for dividend entry push alerts: one row per ticker holding the last
 -- alerted signature, so the daily job only notifies on a *change*.
-create table dividend_alert_state (
+create table if not exists dividend_alert_state (
   ticker text primary key,
   signature text,
   sent_at timestamptz default now()
 );
--- No RLS — server-only
 
 -- Idempotency ledger for the DCA bot's dividend income: one credit per
 -- (user, disclosure), so re-runs never double-pay.
-create table dca_dividend_credits (
-  user_id uuid references auth.users on delete cascade,
+create table if not exists dca_dividend_credits (
+  user_id text references profiles on delete cascade,
   edge_no text references dividends on delete cascade,
   pesos numeric not null,
   credited_at timestamptz default now(),
   primary key (user_id, edge_no)
 );
--- No RLS — server-only
-
--- ---------------------------------------------------------------------------
--- Role grants. Hosted Supabase auto-grants new tables to anon/authenticated via
--- default privileges, but a raw schema.sql does NOT — without these, PostgREST
--- returns "permission denied for table ...". RLS policies above still restrict
--- which ROWS each role can see; these grants only open the tables at all.
--- ---------------------------------------------------------------------------
-grant usage on schema public to anon, authenticated, service_role;
-grant all on all tables in schema public to anon, authenticated, service_role;
-grant all on all sequences in schema public to anon, authenticated, service_role;
-grant all on all functions in schema public to anon, authenticated, service_role;
-alter default privileges in schema public grant all on tables to anon, authenticated, service_role;
-alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;

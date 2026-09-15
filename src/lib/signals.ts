@@ -1,6 +1,6 @@
 import { analyzeStock } from './ai';
 import { getStockData } from './market';
-import { createSupabaseAdmin } from './supabase-admin';
+import { query, queryOne } from './db';
 import { isPushConfigured, notifyHoldersOfSignal } from './push/send';
 import { medianTurnover } from './botLogic';
 import { pctFromLow } from './bounceLogic';
@@ -29,17 +29,32 @@ export interface SignalWithMeta extends StockAnalysisResult {
   macdHist?: number | null;     // MACD histogram at signal time (Dip Radar momentum turn)
 }
 
+interface CacheRow {
+  ticker: string;
+  verdict: string;
+  confidence: string;
+  rationale: string;
+  target_price: number | null;
+  stop_loss: number | null;
+  provider: string;
+  above_sma200: boolean | null;
+  turnover20d: number | null;
+  rsi14: number | null;
+  pct_from_low: number | null;
+  macd_hist: number | null;
+  computed_at: string;
+}
+
 export async function getOrComputeSignal(
   ticker: string, companyName?: string, log: SignalLogContext = {},
 ): Promise<SignalWithMeta> {
   const sym = ticker.toUpperCase().replace('.PS', '');
-  const admin = createSupabaseAdmin();
 
-  const { data: cached } = await admin.from('signal_cache').select('*').eq('ticker', sym).maybeSingle();
+  const cached = await queryOne<CacheRow>(`select * from signal_cache where ticker = $1`, [sym]);
   if (cached && Date.now() - new Date(cached.computed_at).getTime() < CACHE_TTL_MS) {
     return {
-      verdict: cached.verdict,
-      confidence: cached.confidence,
+      verdict: cached.verdict as StockAnalysisResult['verdict'],
+      confidence: cached.confidence as StockAnalysisResult['confidence'],
       rationale: cached.rationale,
       targetPrice: cached.target_price,
       stopLoss: cached.stop_loss,
@@ -71,32 +86,28 @@ export async function getOrComputeSignal(
   const fromLow = pctFromLow(stockData.priceHistory.map((d) => d.close), t?.currentPrice ?? 0);
   const macdHist = t?.macd?.histogram ?? null;
 
-  await admin.from('signal_cache').upsert({
-    ticker: sym,
-    verdict: result.verdict,
-    confidence: result.confidence,
-    rationale: result.rationale,
-    target_price: result.targetPrice,
-    stop_loss: result.stopLoss,
-    provider: result.provider,
-    above_sma200: aboveSma200,
-    turnover20d,
-    rsi14: t?.rsi14 ?? null,
-    pct_from_low: fromLow,
-    macd_hist: macdHist,
-    computed_at: new Date().toISOString(),
-  });
+  await query(
+    `insert into signal_cache
+       (ticker, verdict, confidence, rationale, target_price, stop_loss, provider,
+        above_sma200, turnover20d, rsi14, pct_from_low, macd_hist, computed_at)
+     values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, now())
+     on conflict (ticker) do update set
+       verdict = excluded.verdict, confidence = excluded.confidence, rationale = excluded.rationale,
+       target_price = excluded.target_price, stop_loss = excluded.stop_loss, provider = excluded.provider,
+       above_sma200 = excluded.above_sma200, turnover20d = excluded.turnover20d, rsi14 = excluded.rsi14,
+       pct_from_low = excluded.pct_from_low, macd_hist = excluded.macd_hist, computed_at = now()`,
+    [sym, result.verdict, result.confidence, result.rationale, result.targetPrice, result.stopLoss,
+      result.provider, aboveSma200, turnover20d, t?.rsi14 ?? null, fromLow, macdHist]
+  );
 
   // Append to the accuracy log (price at signal time). Best-effort — never block.
   const priceNow = stockData.technicals?.currentPrice;
   if (priceNow) {
-    await admin
-      .from('signal_history')
-      .insert({
-        ticker: sym, verdict: result.verdict, confidence: result.confidence, price: priceNow,
-        source: log.source ?? 'user', arm: log.arm ?? null, turnover20d,
-      })
-      .then(({ error }) => { if (error) console.warn('signal_history insert failed:', error.message); });
+    query(
+      `insert into signal_history (ticker, verdict, confidence, price, source, arm, turnover20d)
+         values ($1,$2,$3,$4,$5,$6,$7)`,
+      [sym, result.verdict, result.confidence, priceNow, log.source ?? 'user', log.arm ?? null, turnover20d]
+    ).catch((err) => console.warn('signal_history insert failed:', err instanceof Error ? err.message : err));
   }
 
   // Notify holders only on the transition into SELL (not every recompute), and

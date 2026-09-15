@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { supabase } from '../../lib/supabase';
 import { SkeletonCard } from '../ui/Skeleton';
 import {
   computeAdvice, computeDeployPlan, DEFAULT_ADVISOR_CONFIG, DIVIDEND_BLUE_CHIPS,
@@ -27,28 +26,26 @@ export default function Advisor() {
     setLoading(true);
     setError('');
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setError('Sign in to see your advisor.'); setLoading(false); return; }
+      const portfolioRes = await fetch('/api/portfolio');
+      if (!portfolioRes.ok) { setError('Sign in to see your advisor.'); setLoading(false); return; }
+      const { holdings, cash: cashVal } = await portfolioRes.json() as { holdings: Holding[]; cash: number };
 
-      const [{ data: holdings }, { data: cashRow }, { data: watch }, quoteRes, oppRes] = await Promise.all([
-        supabase.from('holdings').select('ticker, qty, buy_price'),
-        supabase.from('portfolio_cash').select('cash').eq('user_id', user.id).maybeSingle(),
-        supabase.from('watchlist').select('ticker'),
+      const [watchRows, quoteRes, oppRes] = await Promise.all([
+        fetch('/api/watchlist').then((r) => (r.ok ? r.json() : [])).catch(() => []),
         fetch('/api/stocks').then((r) => r.json()).catch(() => []),
         fetch('/api/advisor/opportunities').then((r) => (r.ok ? r.json() : { candidates: [] })).catch(() => ({ candidates: [] })),
       ]);
 
-      const cashVal = cashRow ? Number(cashRow.cash) : 0;
       setRealCash(cashVal);
 
       const pm: Record<string, number> = {};
       if (Array.isArray(quoteRes)) for (const q of quoteRes) pm[q.symbol] = q.price;
       setPriceMap(pm);
 
-      const hs = (holdings ?? []) as Holding[];
+      const hs = holdings ?? [];
       const held = new Set(hs.map((h) => h.ticker));
       // Watchlist tickers not already held become zero-share buy candidates.
-      const watchTickers = [...new Set(((watch ?? []) as { ticker: string }[]).map((w) => w.ticker))].filter((t) => !held.has(t));
+      const watchTickers = [...new Set(((watchRows ?? []) as { ticker: string }[]).map((w) => w.ticker))].filter((t) => !held.has(t));
 
       // Fetch the signal (verdict + confidence + stop-loss) for each ticker; cached
       // server-side, and degrades gracefully on failure/rate-limit.

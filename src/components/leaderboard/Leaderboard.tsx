@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import { Skeleton } from '../ui/Skeleton';
 
 interface Row { rank: number; name: string; returnPct: number; totalValue: number }
@@ -38,22 +37,23 @@ export default function Leaderboard() {
 
   useEffect(() => {
     loadBoard('all');
-    supabase.auth.getUser().then(async ({ data: { user } }) => {
-      if (!user) return;
+    fetch('/api/profile').then(async (r) => {
+      if (!r.ok) return;
+      const { profile } = await r.json();
+      if (!profile) return;
       setSignedIn(true);
-      const { data: p } = await supabase.from('profiles').select('display_name, leaderboard_opt_in').eq('id', user.id).maybeSingle();
-      if (p) { setOptIn(!!p.leaderboard_opt_in); setDisplayName(p.display_name ?? ''); }
+      setOptIn(!!profile.leaderboard_opt_in);
+      setDisplayName(profile.display_name ?? '');
     });
   }, []);
 
   async function saveOptIn(next: boolean) {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
     setOptIn(next);
-    await supabase.from('profiles').update({
-      leaderboard_opt_in: next,
-      display_name: displayName.trim() || null,
-    }).eq('id', user.id);
+    await fetch('/api/profile', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ leaderboardOptIn: next, displayName }),
+    });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
     loadBoard();

@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseAdmin } from '../../../lib/supabase-admin';
+import { query } from '../../../lib/db';
 import { fetchAllQuotes } from '../../../lib/market';
 import { computeAdvice, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition } from '../../../lib/advisor';
 import { ttmDividendPerShare, nextUpcomingDividend, dedupeDividendEvents, type DividendRow } from '../../../lib/dividendLogic';
@@ -30,21 +30,22 @@ export const POST: APIRoute = async ({ request }) => {
     }
 
     const tickers = [...new Set(holdings.map((h) => h.ticker))];
-    const admin = createSupabaseAdmin();
 
-    const [quotes, { data: sigRows }, { data: divRows }] = await Promise.all([
+    const [quotes, sigRows, divRows] = await Promise.all([
       fetchAllQuotes(),
-      admin.from('signal_cache').select('ticker, verdict, confidence, stop_loss, rsi14, above_sma200').in('ticker', tickers),
-      admin.from('dividends')
-        .select('ticker, amount, div_type, security_type, record_date, payment_date, announced_at')
-        .eq('security_type', 'COMMON').in('ticker', tickers),
+      query<any>(`select ticker, verdict, confidence, stop_loss, rsi14, above_sma200 from signal_cache where ticker = any($1::text[])`, [tickers]),
+      query<any>(
+        `select ticker, amount, div_type, security_type, record_date, payment_date, announced_at
+           from dividends where security_type = 'COMMON' and ticker = any($1::text[])`,
+        [tickers]
+      ),
     ]);
 
-    const signals = new Map((sigRows ?? []).map((s: any) => [s.ticker as string, s]));
+    const signals = new Map(sigRows.map((s: any) => [s.ticker as string, s]));
 
     // Recurring dividend yield + next record date per held ticker.
     const divByTicker = new Map<string, DividendRow[]>();
-    for (const r of (divRows ?? []) as any[]) {
+    for (const r of divRows) {
       const arr = divByTicker.get(r.ticker) ?? [];
       arr.push({ amount: Number(r.amount), divType: r.div_type, securityType: r.security_type,
         recordDate: r.record_date, paymentDate: r.payment_date, announcedAt: r.announced_at });
@@ -74,7 +75,7 @@ export const POST: APIRoute = async ({ request }) => {
       byTicker.set(h.ticker, e);
     }
     const positions: AdvisorPosition[] = [...byTicker.entries()].map(([ticker, agg]) => {
-      const sig = signals.get(ticker);
+      const sig = signals.get(ticker) as any;
       const avgCost = agg.qty > 0 ? agg.cost / agg.qty : 0;
       return {
         ticker, shares: agg.qty, avgCost,

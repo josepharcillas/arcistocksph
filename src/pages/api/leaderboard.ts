@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseAdmin } from '../../lib/supabase-admin';
+import { query } from '../../lib/db';
 import { computeStandings, START_BALANCE } from '../../lib/leaderboard';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
@@ -18,20 +18,19 @@ export const GET: APIRoute = async ({ url }) => {
   }
 
   try {
-    const admin = createSupabaseAdmin();
-    const standings = await computeStandings(admin);
+    const standings = await computeStandings();
 
     // Baseline per user: ₱100k for all-time; for week/month it's the earliest
     // balance snapshot within the window (falls back to ₱100k until snapshots accrue).
     const baselineByUser = new Map<string, number>();
     if (days != null) {
       const since = new Date(Date.now() - days * 86_400_000).toISOString().slice(0, 10);
-      const { data: snaps } = await admin
-        .from('balance_snapshots')
-        .select('user_id, snapshot_date, total_value')
-        .gte('snapshot_date', since)
-        .order('snapshot_date', { ascending: true });
-      for (const s of snaps ?? []) {
+      const snaps = await query<{ user_id: string; snapshot_date: string; total_value: number }>(
+        `select user_id, snapshot_date, total_value from balance_snapshots
+           where snapshot_date >= $1 order by snapshot_date asc`,
+        [since]
+      );
+      for (const s of snaps) {
         if (!baselineByUser.has(s.user_id)) baselineByUser.set(s.user_id, Number(s.total_value));
       }
     }

@@ -24,12 +24,26 @@ const DEFAULT_CRONS = [
   '0 7 * * 1-5',  // 3:00pm PHT — before the close
 ];
 
-let started = false;
+// The guard lives on globalThis, not in a module variable: Vite/Astro dev SSR
+// re-evaluates this module on reload, which resets module state while the
+// node-cron jobs registered by the previous evaluation keep running in the same
+// process. That stacked one extra registration per reload — on 2026-07-06 the
+// DCA bot had accumulated 23 of them and fired 23 concurrent runs at 02:15 UTC,
+// racing each other's read-modify-write of portfolio_cash. A globalThis key
+// survives re-evaluation, so the second and later inits become no-ops.
+type ScheduledTask = ReturnType<typeof cron.schedule>;
+const SCHED_KEY = Symbol.for('arcistocks.scheduler');
+const g = globalThis as unknown as { [SCHED_KEY]?: { tasks: ScheduledTask[] } };
 
 export function initScheduler(): void {
-  if (started) return;
   if (process.env.DISABLE_BOT_SCHEDULER === '1' || import.meta.env?.DISABLE_BOT_SCHEDULER === '1') return;
-  started = true;
+  if (g[SCHED_KEY]) return;
+
+  const registry: { tasks: ScheduledTask[] } = { tasks: [] };
+  g[SCHED_KEY] = registry;
+  const schedule = (expr: string, fn: () => void | Promise<void>, opts?: Parameters<typeof cron.schedule>[2]) => {
+    registry.tasks.push(cron.schedule(expr, fn, opts));
+  };
 
   const override = process.env.AUTOTRADE_CRON ?? import.meta.env?.AUTOTRADE_CRON;
   const exprs = override ? override.split(';').map((s) => s.trim()).filter(Boolean) : DEFAULT_CRONS;
@@ -49,7 +63,7 @@ export function initScheduler(): void {
       console.warn('[scheduler] skipping invalid stock cron expr:', expr);
       continue;
     }
-    cron.schedule(expr, run('stock'), { timezone: 'Etc/UTC' });
+    schedule(expr, run('stock'), { timezone: 'Etc/UTC' });
     scheduled.push(expr);
   }
 
@@ -58,7 +72,7 @@ export function initScheduler(): void {
   const cryptoExpr = process.env.AUTOTRADE_CRYPTO_CRON ?? import.meta.env?.AUTOTRADE_CRYPTO_CRON ?? '0 */4 * * *';
   let cryptoScheduled = false;
   if (process.env.DISABLE_CRYPTO_BOT !== '1' && cron.validate(cryptoExpr)) {
-    cron.schedule(cryptoExpr, run('crypto'), { timezone: 'Etc/UTC' });
+    schedule(cryptoExpr, run('crypto'), { timezone: 'Etc/UTC' });
     cryptoScheduled = true;
   }
 
@@ -67,7 +81,7 @@ export function initScheduler(): void {
   const dcaExpr = process.env.DCA_CRON ?? import.meta.env?.DCA_CRON ?? '15 2 * * 1';
   let dcaScheduled = false;
   if (process.env.DISABLE_DCA_BOT !== '1' && cron.validate(dcaExpr)) {
-    cron.schedule(dcaExpr, async () => {
+    schedule(dcaExpr, async () => {
       try {
         const r = await runDcaBot();
         console.log(`[dca-bot] ${r.actions.length} action(s) · equity ₱${r.equity.toFixed(2)} (${r.pnlPct >= 0 ? '+' : ''}${r.pnlPct.toFixed(2)}%)`);
@@ -107,11 +121,11 @@ export function initScheduler(): void {
       }
     };
     for (const expr of refreshExprs) {
-      cron.schedule(expr, runRefresh(sizes, 'market'), { timezone: 'Etc/UTC' });
+      schedule(expr, runRefresh(sizes, 'market'), { timezone: 'Etc/UTC' });
       refreshScheduled = true;
     }
     for (const expr of cryptoRefreshExprs) {
-      cron.schedule(expr, runRefresh({ topActive: 0, rotate: 0, cryptoTop: sizes.cryptoTop }, 'crypto'), { timezone: 'Etc/UTC' });
+      schedule(expr, runRefresh({ topActive: 0, rotate: 0, cryptoTop: sizes.cryptoTop }, 'crypto'), { timezone: 'Etc/UTC' });
       refreshScheduled = true;
     }
   }
@@ -126,7 +140,7 @@ export function initScheduler(): void {
     const syncExpr = process.env.DIVIDEND_SYNC_CRON ?? import.meta.env?.DIVIDEND_SYNC_CRON ?? '5 10 * * *';
     const alertExpr = process.env.DIVIDEND_ALERT_CRON ?? import.meta.env?.DIVIDEND_ALERT_CRON ?? '20 0 * * 1-5';
     if (cron.validate(syncExpr)) {
-      cron.schedule(syncExpr, async () => {
+      schedule(syncExpr, async () => {
         try {
           const r = await syncDividends();
           console.log(`[dividend-sync] +${r.inserted} new (seen ${r.seen}, known ${r.skippedKnown}, errors ${r.errors})`);
@@ -137,7 +151,7 @@ export function initScheduler(): void {
       dividendScheduled = true;
     }
     if (cron.validate(alertExpr)) {
-      cron.schedule(alertExpr, async () => {
+      schedule(alertExpr, async () => {
         try {
           const r = await checkDividendEntryAlerts();
           console.log(`[dividend-alerts] strong: ${r.strongEntries.join(', ') || 'none'} · pushes ${r.alertsSent}`);
@@ -155,13 +169,18 @@ export function initScheduler(): void {
   const reportExpr = process.env.AUTOTRADE_REPORT_CRON ?? import.meta.env?.AUTOTRADE_REPORT_CRON ?? '35 7 * * *';
   let reportScheduled = false;
   if (process.env.DISABLE_DAILY_REPORT !== '1' && cron.validate(reportExpr)) {
-    cron.schedule(reportExpr, () => { writeDailyReport().catch((e) => console.warn('[daily-report] failed:', e)); }, { timezone: 'Etc/UTC' });
+    schedule(reportExpr, () => { writeDailyReport().catch((e) => console.warn('[daily-report] failed:', e)); }, { timezone: 'Etc/UTC' });
     reportScheduled = true;
   }
 
   if (scheduled.length === 0 && !cryptoScheduled) {
     console.warn('[scheduler] no valid cron expressions — bot scheduler disabled');
-    started = false;
+    // Tear down everything already registered above (DCA, signal refresh,
+    // dividends, report) before releasing the guard. Simply clearing the guard
+    // would let the next init register a second copy of each of them.
+    for (const t of registry.tasks) t.stop();
+    registry.tasks.length = 0;
+    delete g[SCHED_KEY];
     return;
   }
   console.log(`[scheduler] STOCK AI bot (UTC): ${scheduled.map((e) => `"${e}"`).join(', ')} — 9:45am + 3:00pm PHT, Mon–Fri`);

@@ -1,4 +1,4 @@
-import { createSupabaseAdmin } from './supabase-admin';
+import { query } from './db';
 import { getOrComputeSignal, type SignalLogContext } from './signals';
 import { getOrComputeCryptoSignal } from './cryptoSignals';
 import { fetchAllQuotes } from './market';
@@ -45,15 +45,12 @@ export async function refreshSignals(opts: RefreshOptions = {}): Promise<Refresh
   const rotate = Math.max(0, opts.rotate ?? 30);
   const cryptoTop = Math.max(0, opts.cryptoTop ?? 15);
 
-  const admin = createSupabaseAdmin();
-  const [{ data: holdings }, { data: watchlist }, { data: cacheRows }] = await Promise.all([
-    admin.from('holdings').select('ticker'),
-    admin.from('watchlist').select('ticker'),
-    admin.from('signal_cache').select('ticker, computed_at'),
+  const [holdings, watchlist, cacheRows] = await Promise.all([
+    query<{ ticker: string }>(`select distinct ticker from holdings`),
+    query<{ ticker: string }>(`select distinct ticker from watchlist`),
+    query<{ ticker: string; computed_at: string }>(`select ticker, computed_at from signal_cache`),
   ]);
-  const cacheAge = new Map<string, number>(
-    (cacheRows ?? []).map((r: any) => [r.ticker as string, new Date(r.computed_at).getTime()]),
-  );
+  const cacheAge = new Map<string, number>(cacheRows.map((r) => [r.ticker, new Date(r.computed_at).getTime()]));
   const isFresh = (t: string) => {
     const at = cacheAge.get(t);
     return at != null && Date.now() - at < FRESH_MS;
@@ -62,9 +59,9 @@ export async function refreshSignals(opts: RefreshOptions = {}): Promise<Refresh
   // Crypto-namespaced holdings ("X:BTC") are the crypto bot's — held-ring
   // refreshes go through the PSE stock path only.
   const noCrypto = (t: string) => !t.includes(':');
-  const heldTickers = [...new Set((holdings ?? []).map((h: any) => h.ticker as string))].filter(noCrypto);
+  const heldTickers = [...new Set(holdings.map((h) => h.ticker))].filter(noCrypto);
   const heldSet = new Set(heldTickers);
-  const watchTickers = [...new Set((watchlist ?? []).map((w: any) => w.ticker as string))]
+  const watchTickers = [...new Set(watchlist.map((w) => w.ticker))]
     .filter((t) => noCrypto(t) && !heldSet.has(t));
 
   // Liquid PSE universe from one bulk phisix call: today's peso turnover.
