@@ -17,6 +17,14 @@ import pg from 'pg';
 pg.types.setTypeParser(1700, (v) => (v === null ? null : Number(v))); // numeric
 pg.types.setTypeParser(20, (v) => (v === null ? null : Number(v))); // int8
 
+// date (1082) is handed back as a JS Date by default, at local midnight.
+// Everything downstream types these columns as 'YYYY-MM-DD' strings and
+// treats them as such - sorting with localeCompare, and building an ISO
+// instant by concatenation. Under Supabase they arrived as strings over
+// JSON and did; moving to pg silently changed the type and broke both.
+// Keep the wire format rather than fixing each caller.
+pg.types.setTypeParser(1082, (v) => v); // date -> YYYY-MM-DD, unparsed
+
 function env(key: string): string | undefined {
   return import.meta.env[key] ?? process.env[key];
 }
