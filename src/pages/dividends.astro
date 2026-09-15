@@ -21,6 +21,17 @@ const typeStyle = (t: string | null) =>
   t === 'Special' ? 'bg-amber-500/15 text-amber-400' : 'bg-slate-700/40 text-slate-300';
 const peso = (n: number, d = 2) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: d, maximumFractionDigits: d })}`;
 const dps = (n: number) => peso(n, n < 1 ? 4 : 2);
+const shortDate = (iso: string | null) => {
+  if (!iso) return null;
+  const d = new Date(iso + 'T00:00:00+08:00');
+  return isNaN(d.getTime()) ? iso : d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
+};
+// Sort key for the "Upcoming" column: soonest record date first; rows with no
+// upcoming payout on record get a max timestamp so they sort to the bottom.
+const nextRecordMs = (iso: string | null) => {
+  const t = iso ? new Date(iso + 'T00:00:00+08:00').getTime() : NaN;
+  return isNaN(t) ? 8.64e15 : t;
+};
 const compactShares = (n: number) => n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(Math.round(n));
 const compactPeso = (n: number) => n >= 1e6 ? `₱${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `₱${Math.round(n / 1e3)}K` : `₱${Math.round(n)}`;
 
@@ -35,8 +46,19 @@ function liquidity(r: DividendYieldRow) {
   return { label: 'Very thin', cls: 'text-red-400' };
 }
 
-// Shared grid so the header row and every summary row line up.
-const grid = 'grid grid-cols-[minmax(0,1.6fr)_0.8fr_1fr_0.9fr_0.55fr_0.85fr_1.25fr_1rem] gap-2 items-center';
+// Shared column template so the header and every desktop row line up. The
+// `grid` display is applied per-use (md+ only) so mobile can stack into cards.
+const cols = 'grid-cols-[minmax(0,1.5fr)_0.75fr_0.95fr_0.85fr_0.5fr_0.8fr_1.15fr_0.95fr_1rem] gap-2 items-center';
+
+// Sort ranking. "Best entry" floats the buyable names to the top: strongest
+// entry rating first, then an AI BUY verdict, then the entry score, then yield.
+const entryRank: Record<string, number> = { 'STRONG ENTRY': 3, 'GOOD ENTRY': 2, 'WAIT': 1, 'AVOID': 0 };
+const buyRank = (v: string | null) => (v === 'BUY' ? 2 : v === 'SELL' ? 0 : 1);
+rows.sort((a, b) =>
+  (entryRank[b.entry.rating] ?? 0) - (entryRank[a.entry.rating] ?? 0)
+  || buyRank(b.verdict) - buyRank(a.verdict)
+  || b.entry.score - a.entry.score
+  || b.regularYieldPct - a.regularYieldPct);
 ---
 <DashboardLayout title="Dividends">
   <style>
@@ -65,9 +87,18 @@ const grid = 'grid grid-cols-[minmax(0,1.6fr)_0.8fr_1fr_0.9fr_0.55fr_0.85fr_1.25
     )}
 
     {rows.length > 0 && (
+      <div id="div-sort" class="flex flex-wrap items-center gap-1.5 mb-3">
+        <span class="text-xs text-slate-500 mr-1">Sort by</span>
+        <button type="button" data-sort="best" class="sort-btn px-2.5 py-1 rounded-md text-xs font-medium border border-slate-700 text-slate-400 hover:bg-slate-800">Best entry</button>
+        <button type="button" data-sort="ryield" class="sort-btn px-2.5 py-1 rounded-md text-xs font-medium border border-slate-700 text-slate-400 hover:bg-slate-800">Recurring yield</button>
+        <button type="button" data-sort="tyield" class="sort-btn px-2.5 py-1 rounded-md text-xs font-medium border border-slate-700 text-slate-400 hover:bg-slate-800">Total yield</button>
+        <button type="button" data-sort="price" class="sort-btn px-2.5 py-1 rounded-md text-xs font-medium border border-slate-700 text-slate-400 hover:bg-slate-800">Price</button>
+        <button type="button" data-sort="upcoming" class="sort-btn px-2.5 py-1 rounded-md text-xs font-medium border border-slate-700 text-slate-400 hover:bg-slate-800">Upcoming payout</button>
+      </div>
+
       <div class="overflow-x-auto">
-        <div class="min-w-[820px] rounded-xl border border-slate-800 overflow-hidden">
-          <div class={`${grid} bg-slate-900 text-slate-400 text-xs font-medium px-3 py-2.5`}>
+        <div id="div-rows" class="md:min-w-[940px] rounded-xl border border-slate-800 overflow-hidden">
+          <div class={`hidden md:grid ${cols} bg-slate-900 text-slate-400 text-xs font-medium px-3 py-2.5`}>
             <span>Stock</span>
             <span class="text-right">Price</span>
             <span class="text-right">Recurring yield</span>
@@ -75,14 +106,43 @@ const grid = 'grid grid-cols-[minmax(0,1.6fr)_0.8fr_1fr_0.9fr_0.55fr_0.85fr_1.25
             <span class="text-center">Payouts</span>
             <span class="text-center">AI signal</span>
             <span>Entry</span>
+            <span>Upcoming</span>
             <span></span>
           </div>
 
           {rows.map((r) => {
             const liq = liquidity(r);
             return (
-            <details class="border-t border-slate-800/70">
-              <summary class={`${grid} px-3 py-2.5 text-sm hover:bg-slate-900/50`}>
+            <details
+              class="border-t border-slate-800/70"
+              data-entry={entryRank[r.entry.rating] ?? 0}
+              data-buy={buyRank(r.verdict)}
+              data-score={r.entry.score}
+              data-ryield={r.regularYieldPct}
+              data-tyield={r.yieldPct}
+              data-price={r.price}
+              data-next={nextRecordMs(r.nextRecordDate)}
+            >
+              <summary class="hover:bg-slate-900/50">
+                {/* Mobile card (stacks instead of side-scrolling a 9-col table) */}
+                <div class="md:hidden flex items-center justify-between gap-2 px-3 py-2.5 text-sm">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="font-semibold text-white">{r.ticker}</span>
+                      <span class={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${ratingStyle(r.entry.rating)}`}>{r.entry.rating}</span>
+                    </div>
+                    <span class="block text-xs text-slate-500 truncate">{r.companyName}</span>
+                    <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] mt-1 tabular-nums">
+                      <span class="text-slate-300">{peso(r.price)}</span>
+                      <span class="text-green-400 font-semibold">{r.regularYieldPct.toFixed(2)}% yield</span>
+                      <span class={verdictStyle(r.verdict)}>AI {r.verdict ?? '—'}</span>
+                      {r.nextRecordDate && <span class="text-green-300">◷ {shortDate(r.nextRecordDate)}</span>}
+                    </div>
+                  </div>
+                  <span class="chev text-slate-500">▸</span>
+                </div>
+                {/* Desktop table row */}
+                <div class={`hidden md:grid ${cols} px-3 py-2.5 text-sm`}>
                 <span class="min-w-0">
                   <span class="font-semibold text-white">{r.ticker}</span>
                   <span class="block text-xs text-slate-500 truncate">{r.companyName}</span>
@@ -103,7 +163,19 @@ const grid = 'grid grid-cols-[minmax(0,1.6fr)_0.8fr_1fr_0.9fr_0.55fr_0.85fr_1.25
                     {r.entry.rating}
                   </span>
                 </span>
+                <span class="text-xs min-w-0">
+                  {r.nextRecordDate ? (
+                    <>
+                      <span class="text-green-300 tabular-nums whitespace-nowrap">{shortDate(r.nextRecordDate)}</span>
+                      {r.nextAmount != null && <span class="block text-[11px] text-slate-500 tabular-nums">{dps(r.nextAmount)}/sh</span>}
+                      <span class="block text-[11px] text-slate-600">record date</span>
+                    </>
+                  ) : (
+                    <span class="text-slate-600">—</span>
+                  )}
+                </span>
                 <span class="chev text-slate-500 text-center">▸</span>
+                </div>
               </summary>
 
               <div class="px-3 pb-4 pt-1 bg-slate-900/30 text-sm">
@@ -170,4 +242,41 @@ const grid = 'grid grid-cols-[minmax(0,1.6fr)_0.8fr_1fr_0.9fr_0.55fr_0.85fr_1.25
       <p class="text-slate-600 pt-2 text-center">Data from PSE Edge disclosures. This is not financial advice.</p>
     </div>
   </div>
+
+  <script>
+    const container = document.getElementById('div-rows');
+    const toolbar = document.getElementById('div-sort');
+    if (container && toolbar) {
+      const num = (el: Element, k: string) => parseFloat(el.getAttribute(k) || '0') || 0;
+      const comparators: Record<string, (a: Element, b: Element) => number> = {
+        best: (a, b) =>
+          num(b, 'data-entry') - num(a, 'data-entry') ||
+          num(b, 'data-buy') - num(a, 'data-buy') ||
+          num(b, 'data-score') - num(a, 'data-score') ||
+          num(b, 'data-ryield') - num(a, 'data-ryield'),
+        ryield: (a, b) => num(b, 'data-ryield') - num(a, 'data-ryield'),
+        tyield: (a, b) => num(b, 'data-tyield') - num(a, 'data-tyield'),
+        price: (a, b) => num(b, 'data-price') - num(a, 'data-price'),
+        // Soonest upcoming record date first; rows with none sort to the bottom.
+        upcoming: (a, b) => num(a, 'data-next') - num(b, 'data-next'),
+      };
+      const apply = (mode: string) => {
+        const cmp = comparators[mode] || comparators.best;
+        Array.from(container.querySelectorAll(':scope > details'))
+          .sort(cmp)
+          .forEach((row) => container.appendChild(row));
+        toolbar.querySelectorAll('button').forEach((b) => {
+          const active = (b as HTMLElement).dataset.sort === mode;
+          b.classList.toggle('bg-slate-700', active);
+          b.classList.toggle('text-white', active);
+          b.classList.toggle('text-slate-400', !active);
+        });
+      };
+      toolbar.addEventListener('click', (e) => {
+        const btn = (e.target as HTMLElement).closest('button[data-sort]') as HTMLElement | null;
+        if (btn?.dataset.sort) apply(btn.dataset.sort);
+      });
+      apply('best');
+    }
+  </script>
 </DashboardLayout>

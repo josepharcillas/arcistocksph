@@ -9,7 +9,8 @@
 // are credited to cash from the scraped PSE Edge `dividends` table (idempotent
 // via dca_dividend_credits).
 
-import { createSupabaseAdmin } from './supabase-admin';
+import { query } from './db';
+import { getOrCreateUser } from './repo';
 import { fetchAllQuotes } from './market';
 import { fetchTopCryptoQuotes } from './market/crypto';
 import { STARTING_CASH, STOCK_FEES, CRYPTO_FEES } from './autoTrade';
@@ -43,29 +44,33 @@ export interface DcaRunResult {
 const today = () => new Date().toISOString().slice(0, 10);
 const display = (t: string) => t.replace(/^X:/, '');
 
-async function resolveDcaUserId(admin: ReturnType<typeof createSupabaseAdmin>): Promise<string> {
-  for (let page = 1; page <= 20; page++) {
-    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
-    if (error) throw new Error(`listUsers failed: ${error.message}`);
-    const u = data?.users?.find((x) => x.email === DCA_BOT_EMAIL);
-    if (u) return u.id;
-    if (!data?.users?.length || data.users.length < 200) break;
-  }
-  throw new Error(`DCA bot user ${DCA_BOT_EMAIL} not found — run: node scripts/seed-bot.mjs`);
+// Serialises runs across the whole process. The bot's cash update is a
+// read-modify-write (read below, written at the end), so two concurrent runs
+// each read the same starting cash and the last write wins — silently erasing
+// the other's spending. Keyed on globalThis so a dev-server module reload can't
+// hand out a second, independent lock.
+const LOCK_KEY = Symbol.for('arcistocks.dcaBot.lock');
+const lockHost = globalThis as unknown as { [LOCK_KEY]?: Promise<unknown> };
+
+export function runDcaBot(): Promise<DcaRunResult> {
+  const prior = lockHost[LOCK_KEY] ?? Promise.resolve();
+  const next = prior.then(runDcaBotUnlocked, runDcaBotUnlocked);
+  // Keep the chain alive even if this run rejects, so the lock never wedges.
+  lockHost[LOCK_KEY] = next.catch(() => undefined);
+  return next;
 }
 
-export async function runDcaBot(): Promise<DcaRunResult> {
-  const admin = createSupabaseAdmin();
-  const botId = await resolveDcaUserId(admin);
+async function runDcaBotUnlocked(): Promise<DcaRunResult> {
+  const botId = (await getOrCreateUser(DCA_BOT_EMAIL)).id;
 
-  const [{ data: holdingsRows }, { data: cashRow }, stockQuotes, cryptoQuotes] = await Promise.all([
-    admin.from('holdings').select('ticker, qty, buy_price, buy_date, company_name').eq('user_id', botId),
-    admin.from('portfolio_cash').select('cash').eq('user_id', botId).maybeSingle(),
+  const [holdingsRows, cashRow, stockQuotes, cryptoQuotes] = await Promise.all([
+    query<any>(`select ticker, qty, buy_price, buy_date, company_name from holdings where user_id = $1`, [botId]),
+    query<{ cash: number }>(`select cash from portfolio_cash where user_id = $1`, [botId]).then((r) => r[0] ?? null),
     fetchAllQuotes(),
     fetchTopCryptoQuotes(10),
   ]);
   const holdings = new Map(
-    ((holdingsRows ?? []) as any[]).map((h) => [h.ticker as string, {
+    holdingsRows.map((h: any) => [h.ticker as string, {
       ticker: h.ticker as string, qty: Number(h.qty), buy_price: Number(h.buy_price),
       buy_date: (h.buy_date as string | null) ?? null,
       company_name: (h.company_name as string) ?? h.ticker,
@@ -87,13 +92,16 @@ export async function runDcaBot(): Promise<DcaRunResult> {
   const heldStocks = [...holdings.keys()].filter((t) => !t.startsWith('X:'));
   if (heldStocks.length > 0) {
     const since = new Date(Date.now() - 60 * 86400_000).toISOString().slice(0, 10);
-    const { data: paidRaw } = await admin.from('dividends')
-      .select('edge_no, ticker, amount, security_type, record_date, payment_date, announced_at')
-      .in('ticker', heldStocks).eq('security_type', 'COMMON')
-      .lte('payment_date', today()).gte('payment_date', since);
+    const paidRaw = await query<any>(
+      `select edge_no, ticker, amount, security_type, record_date, payment_date, announced_at
+         from dividends
+        where ticker = any($1::text[]) and security_type = 'COMMON'
+          and payment_date <= $2 and payment_date >= $3`,
+      [heldStocks, today(), since]
+    );
     // Same dividend can be filed twice — dedupe per event so we credit once.
     const byT = new Map<string, any[]>();
-    for (const r of (paidRaw ?? []) as any[]) {
+    for (const r of paidRaw) {
       const a = byT.get(r.ticker) ?? []; a.push({ ...r, edgeNo: r.edge_no, securityType: r.security_type, recordDate: r.record_date, announcedAt: r.announced_at }); byT.set(r.ticker, a);
     }
     const paid = [...byT.values()].flatMap((rows) => dedupeDividendEvents(rows));
@@ -103,9 +111,15 @@ export async function runDcaBot(): Promise<DcaRunResult> {
       if (d.record_date && h.buy_date && h.buy_date > d.record_date) continue; // bought too late for this payout
       const pesos = h.qty * Number(d.amount);
       if (!(pesos > 0)) continue;
-      const { error } = await admin.from('dca_dividend_credits')
-        .insert({ user_id: botId, edge_no: d.edge_no, pesos });
-      if (error) continue; // duplicate key = already credited on an earlier run
+      try {
+        await query(
+          `insert into dca_dividend_credits (user_id, edge_no, pesos) values ($1, $2, $3)`,
+          [botId, d.edge_no, pesos]
+        );
+      } catch (err: any) {
+        if (err?.code === '23505') continue; // duplicate key = already credited on an earlier run
+        throw err;
+      }
       cash += pesos;
       actions.push({
         kind: 'DIVIDEND', ticker: d.ticker, pesos,
@@ -126,15 +140,20 @@ export async function runDcaBot(): Promise<DcaRunResult> {
     if (ex) {
       const newQty = ex.qty + qty;
       const newAvg = (ex.qty * ex.buy_price + cost) / newQty;
-      await admin.from('holdings').update({ qty: newQty, buy_price: newAvg }).eq('user_id', botId).eq('ticker', ticker);
+      await query(`update holdings set qty = $1, buy_price = $2 where user_id = $3 and ticker = $4`, [newQty, newAvg, botId, ticker]);
       ex.qty = newQty; ex.buy_price = newAvg;
     } else {
-      await admin.from('holdings').insert({ user_id: botId, ticker, company_name: name, qty, buy_price: effPrice, buy_date: today() });
+      await query(
+        `insert into holdings (user_id, ticker, company_name, qty, buy_price, buy_date) values ($1,$2,$3,$4,$5,$6)`,
+        [botId, ticker, name, qty, effPrice, today()]
+      );
       holdings.set(ticker, { ticker, qty, buy_price: effPrice, buy_date: today(), company_name: name });
     }
     const reason = `Scheduled DCA — ${fractional ? qty.toFixed(8) : qty} unit(s) of ${display(ticker)} for ₱${cost.toFixed(2)}.`;
-    await admin.from('paper_trades').insert({ user_id: botId, ticker, company_name: name, action: 'BUY', qty, price: effPrice, reason })
-      .then(({ error }) => { if (error) console.warn('[dca-bot] trade log failed', error.message); });
+    await query(
+      `insert into paper_trades (user_id, ticker, company_name, action, qty, price, reason) values ($1,$2,$3,'BUY',$4,$5,$6)`,
+      [botId, ticker, name, qty, effPrice, reason]
+    ).catch((err) => console.warn('[dca-bot] trade log failed', err instanceof Error ? err.message : err));
     actions.push({ kind: 'BUY', ticker: display(ticker), shares: qty, pesos: cost, reason });
   }
 
@@ -156,15 +175,20 @@ export async function runDcaBot(): Promise<DcaRunResult> {
   await buy(BTC_TICKER, btcBudget, CRYPTO_FEES, true, 'Bitcoin');
 
   // --- Persist cash + snapshot equity ---
-  await admin.from('portfolio_cash').upsert({ user_id: botId, cash, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+  await query(
+    `insert into portfolio_cash (user_id, cash, updated_at) values ($1, $2, now())
+       on conflict (user_id) do update set cash = excluded.cash, updated_at = now()`,
+    [botId, cash]
+  );
   const finalHoldings = [...holdings.values()].map((h) => {
     const p = price(h.ticker) || h.buy_price;
     return { ticker: display(h.ticker), qty: h.qty, avgCost: h.buy_price, price: p, value: h.qty * p };
   });
   const equity = cash + finalHoldings.reduce((s, h) => s + h.value, 0);
-  await admin.from('balance_snapshots').upsert(
-    { user_id: botId, snapshot_date: today(), total_value: equity },
-    { onConflict: 'user_id,snapshot_date' },
+  await query(
+    `insert into balance_snapshots (user_id, snapshot_date, total_value) values ($1, $2, $3)
+       on conflict (user_id, snapshot_date) do update set total_value = excluded.total_value`,
+    [botId, today(), equity]
   );
 
   return {
@@ -177,19 +201,18 @@ export async function runDcaBot(): Promise<DcaRunResult> {
 
 // Read-only state (no buying).
 export async function getDcaState() {
-  const admin = createSupabaseAdmin();
-  const botId = await resolveDcaUserId(admin);
-  const [{ data: holdings }, { data: cashRow }, { data: snaps }, { data: trades }, stockQuotes, cryptoQuotes] = await Promise.all([
-    admin.from('holdings').select('ticker, qty, buy_price, company_name').eq('user_id', botId),
-    admin.from('portfolio_cash').select('cash').eq('user_id', botId).maybeSingle(),
-    admin.from('balance_snapshots').select('snapshot_date, total_value').eq('user_id', botId).order('snapshot_date'),
-    admin.from('paper_trades').select('ticker, action, qty, price, traded_at').eq('user_id', botId).order('traded_at', { ascending: false }).limit(50),
+  const botId = (await getOrCreateUser(DCA_BOT_EMAIL)).id;
+  const [holdings, cashRow, snaps, trades, stockQuotes, cryptoQuotes] = await Promise.all([
+    query<any>(`select ticker, qty, buy_price, company_name from holdings where user_id = $1`, [botId]),
+    query<{ cash: number }>(`select cash from portfolio_cash where user_id = $1`, [botId]).then((r) => r[0] ?? null),
+    query<any>(`select snapshot_date, total_value from balance_snapshots where user_id = $1 order by snapshot_date`, [botId]),
+    query<any>(`select ticker, action, qty, price, traded_at from paper_trades where user_id = $1 order by traded_at desc limit 50`, [botId]),
     fetchAllQuotes().catch(() => new Map()),
     fetchTopCryptoQuotes(10).catch(() => new Map()),
   ]);
   const price = (t: string): number =>
     t.startsWith('X:') ? ((cryptoQuotes as Map<string, any>).get(t)?.price ?? 0) : ((stockQuotes as Map<string, any>).get(t)?.price ?? 0);
-  const hs = (holdings ?? []).map((h: any) => {
+  const hs = holdings.map((h: any) => {
     const p = price(h.ticker) || Number(h.buy_price);
     return { ticker: display(h.ticker), qty: Number(h.qty), avgCost: Number(h.buy_price), price: p, value: Number(h.qty) * p };
   });
@@ -199,7 +222,7 @@ export async function getDcaState() {
     assetClass: 'dca', botUserId: botId, cash, equity, holdings: hs,
     pnlPct: ((equity - STARTING_CASH) / STARTING_CASH) * 100,
     startingCash: STARTING_CASH, config: DCA_CONFIG,
-    equityCurve: (snaps ?? []).map((s: any) => ({ date: s.snapshot_date, value: Number(s.total_value) })),
-    recentTrades: (trades ?? []).map((t: any) => ({ ...t, ticker: display(t.ticker) })),
+    equityCurve: snaps.map((s: any) => ({ date: s.snapshot_date, value: Number(s.total_value) })),
+    recentTrades: trades.map((t: any) => ({ ...t, ticker: display(t.ticker) })),
   };
 }

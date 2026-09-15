@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { supabase } from '../../lib/supabase';
 import {
   isPushSupported,
   getPermission,
@@ -31,14 +30,10 @@ export default function NotificationSettings() {
   }, []);
 
   async function loadStocks() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    // Tickers the user holds — these are what a signal alert would fire for.
-    const { data: holdings } = await supabase.from('holdings').select('ticker').eq('user_id', user.id);
-    const tickers = [...new Set((holdings ?? []).map((h: any) => h.ticker))];
-    const { data: prefs } = await supabase.from('push_preferences').select('ticker, enabled').eq('user_id', user.id);
-    const off = new Set((prefs ?? []).filter((p: any) => p.enabled === false).map((p: any) => p.ticker));
-    setStocks(tickers.map((t) => ({ ticker: t, enabled: !off.has(t) })));
+    const res = await fetch('/api/push/preferences');
+    if (!res.ok) return;
+    const { stocks: rows } = await res.json();
+    setStocks(rows ?? []);
   }
 
   async function toggleMaster() {
@@ -56,12 +51,11 @@ export default function NotificationSettings() {
 
   async function toggleStock(ticker: string, next: boolean) {
     setStocks((prev) => prev.map((s) => (s.ticker === ticker ? { ...s, enabled: next } : s)));
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
-    await supabase.from('push_preferences').upsert(
-      { user_id: user.id, ticker, enabled: next },
-      { onConflict: 'user_id,ticker' }
-    );
+    await fetch('/api/push/preferences', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker, enabled: next }),
+    });
   }
 
   if (!supported) {

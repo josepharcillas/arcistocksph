@@ -3,7 +3,7 @@
 
 declare namespace App {
   interface Locals {
-    // Set by src/middleware.ts on protected /dashboard routes.
-    user: import('@supabase/supabase-js').User | null;
+    // Set by src/middleware.ts from the session cookie. Null when signed out.
+    user: import('./lib/auth').AuthUser | null;
   }
 }

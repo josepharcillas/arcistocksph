@@ -1,11 +1,11 @@
 // Server-side assembler for the owner-only /dashboard/bots page: gathers all
 // three paper-trading bots' stats, benchmarks, equity curves, and transaction
-// timelines in one call. Read-only. Uses the admin client (bots run under
-// service accounts, so RLS is bypassed) and the SAME win-rate/benchmark math as
+// timelines in one call. Read-only. Uses the SAME win-rate/benchmark math as
 // scripts/scoreboard.mjs (via botStats.mjs) so the page and the terminal agree.
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { createSupabaseAdmin } from './supabase-admin';
+import { query, queryOne } from './db';
+import { getOrCreateUser } from './repo';
 import { fetchAllQuotes } from './market';
 import { fetchTopCryptoQuotes } from './market/crypto';
 import { STARTING_CASH } from './autoTrade';
@@ -123,45 +123,47 @@ async function stockBasketReturn(prices: Map<string, number>): Promise<number | 
 }
 
 async function summarizeBot(
-  admin: ReturnType<typeof createSupabaseAdmin>,
   botId: string, withDividends: boolean, priceOf: (t: string) => number,
 ): Promise<Omit<BotView, 'key' | 'label' | 'icon' | 'benchmarkLabel' | 'benchmarkPct' | 'alphaPct'>> {
-  const [{ data: holdings }, { data: cashRow }, { data: snaps }, { data: trades }, dividends] = await Promise.all([
-    admin.from('holdings').select('ticker, qty, buy_price').eq('user_id', botId),
-    admin.from('portfolio_cash').select('cash').eq('user_id', botId).maybeSingle(),
-    admin.from('balance_snapshots').select('snapshot_date, total_value').eq('user_id', botId).order('snapshot_date'),
-    admin.from('paper_trades').select('ticker, action, qty, price, reason, traded_at').eq('user_id', botId).order('traded_at', { ascending: true }),
+  const [holdings, cashRow, snaps, trades, dividendRows] = await Promise.all([
+    query<any>(`select ticker, qty, buy_price from holdings where user_id = $1`, [botId]),
+    queryOne<{ cash: number }>(`select cash from portfolio_cash where user_id = $1`, [botId]),
+    query<any>(`select snapshot_date, total_value from balance_snapshots where user_id = $1 order by snapshot_date`, [botId]),
+    query<any>(`select ticker, action, qty, price, reason, traded_at from paper_trades where user_id = $1 order by traded_at asc`, [botId]),
     withDividends
-      ? admin.from('dca_dividend_credits').select('pesos, credited_at, dividends(ticker, amount, payment_date)').eq('user_id', botId)
-      : Promise.resolve({ data: [] as any[] }),
+      ? query<any>(
+          `select c.pesos, c.credited_at, d.ticker, d.amount, d.payment_date
+             from dca_dividend_credits c join dividends d on d.edge_no = c.edge_no
+            where c.user_id = $1`,
+          [botId]
+        )
+      : Promise.resolve([] as any[]),
   ]);
 
   const cash = cashRow ? Number(cashRow.cash) : STARTING_CASH;
-  const holdingsValue = (holdings ?? []).reduce((s: number, h: any) => s + Number(h.qty) * (priceOf(h.ticker) || Number(h.buy_price)), 0);
+  const holdingsValue = holdings.reduce((s: number, h: any) => s + Number(h.qty) * (priceOf(h.ticker) || Number(h.buy_price)), 0);
   const equity = cash + holdingsValue;
 
-  const { closed: _c, realized, winRate } = winRateReplay((trades ?? []) as any[]);
+  const { closed: _c, realized, winRate } = winRateReplay(trades as any[]);
 
-  const divRows: RawDividend[] = ((dividends?.data ?? []) as any[]).map((r) => ({
-    ticker: r.dividends?.ticker ?? '', pesos: r.pesos, amount: r.dividends?.amount,
-    payment_date: r.dividends?.payment_date, credited_at: r.credited_at,
+  const divRows: RawDividend[] = dividendRows.map((r: any) => ({
+    ticker: r.ticker ?? '', pesos: r.pesos, amount: r.amount, payment_date: r.payment_date, credited_at: r.credited_at,
   })).filter((d) => d.ticker);
 
   return {
     equity, cash,
     pnlPct: ((equity - STARTING_CASH) / STARTING_CASH) * 100,
-    positions: (holdings ?? []).length,
-    tradeCount: (trades ?? []).length,
+    positions: holdings.length,
+    tradeCount: trades.length,
     winRate, realized,
-    equityCurve: (snaps ?? []).map((s: any) => ({ date: s.snapshot_date, value: Number(s.total_value) })),
-    transactions: mergeTransactions((trades ?? []) as RawTrade[], divRows),
-    startDate: (snaps ?? [])[0]?.snapshot_date ?? null,
+    equityCurve: snaps.map((s: any) => ({ date: s.snapshot_date, value: Number(s.total_value) })),
+    transactions: mergeTransactions(trades as RawTrade[], divRows),
+    startDate: snaps[0]?.snapshot_date ?? null,
   };
 }
 
 /** Assemble the full three-bot scoreboard for the admin page. */
 export async function getBotScoreboard(): Promise<BotScoreboard> {
-  const admin = createSupabaseAdmin();
   const [stockQuotes, cryptoQuotes] = await Promise.all([
     fetchAllQuotes().catch(() => new Map()),
     fetchTopCryptoQuotes(Number(process.env.CRYPTO_UNIVERSE ?? 250)).catch(() => new Map()),
@@ -172,13 +174,8 @@ export async function getBotScoreboard(): Promise<BotScoreboard> {
 
   const bots: BotView[] = [];
   for (const cfg of BOTS) {
-    let botId: string;
-    try {
-      botId = await resolveBotId(admin, cfg.email);
-    } catch {
-      continue; // bot not seeded — skip rather than fail the whole page
-    }
-    const base = await summarizeBot(admin, botId, cfg.key === 'dca', priceOf);
+    const botId = (await getOrCreateUser(cfg.email)).id;
+    const base = await summarizeBot(botId, cfg.key === 'dca', priceOf);
 
     let benchmarkPct: number | null = null;
     if (cfg.benchmark === 'BTC') benchmarkPct = await btcReturnSince(base.startDate);
@@ -194,17 +191,4 @@ export async function getBotScoreboard(): Promise<BotScoreboard> {
   }
 
   return { asOf: new Date().toISOString(), bots };
-}
-
-// Resolve a bot's auth user id by email (paginated listUsers) — same approach as
-// autoTrade/dcaBot, duplicated here to keep those internal helpers unexported.
-async function resolveBotId(admin: ReturnType<typeof createSupabaseAdmin>, email: string): Promise<string> {
-  for (let page = 1; page <= 20; page++) {
-    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
-    if (error) throw new Error(`listUsers failed: ${error.message}`);
-    const u = data?.users?.find((x) => x.email === email);
-    if (u) return u.id;
-    if (!data?.users?.length || data.users.length < 200) break;
-  }
-  throw new Error(`Bot user ${email} not found`);
 }

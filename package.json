@@ -20,13 +20,16 @@
     "@tailwindcss/vite": "^4.0.0",
     "@types/node-cron": "^3.0.11",
     "astro": "^5.0.0",
+    "jose": "^5.10.0",
     "node-cron": "^4.5.0",
+    "pg": "^8.23.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "tailwindcss": "^4.0.0",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@types/web-push": "^3.6.4",

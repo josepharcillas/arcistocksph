@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { fetchAllQuotes } from '../../../lib/market';
 import { fetchTopCryptoQuotes } from '../../../lib/market/crypto';
-import { createSupabaseAdmin } from '../../../lib/supabase-admin';
+import { query } from '../../../lib/db';
 
 // Market movers for the signals page: top gainers + most actively traded PSE
 // stocks AND coins, decorated with any FRESH cached signal. Display-only and
@@ -59,11 +59,11 @@ export const GET: APIRoute = async () => {
 
     // Decorate with fresh cached signals (one query, no AI calls).
     const tickers = [...new Set([...topGainers, ...mostActive, ...coinGainers, ...coinActive].map((m) => m.ticker))];
-    const admin = createSupabaseAdmin();
-    const { data: sigs } = await admin
-      .from('signal_cache').select('ticker, verdict, confidence, computed_at').in('ticker', tickers);
+    const sigs = tickers.length
+      ? await query<any>(`select ticker, verdict, confidence, computed_at from signal_cache where ticker = any($1::text[])`, [tickers])
+      : [];
     const sigMap = new Map(
-      (sigs ?? [])
+      sigs
         .filter((s: any) => Date.now() - new Date(s.computed_at).getTime() < SIGNAL_FRESH_MS)
         .map((s: any) => [s.ticker, s]),
     );

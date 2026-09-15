@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import { SkeletonCard } from '../ui/Skeleton';
 import { derivePositions } from '../../lib/paper';
 
@@ -21,7 +20,7 @@ export default function PaperTrading() {
   const [trades, setTrades] = useState<Trade[]>([]);
   const [quotes, setQuotes] = useState<Record<string, Quote>>({});
   const [loading, setLoading] = useState(true);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [signedIn, setSignedIn] = useState(false);
 
   const [ticker, setTicker] = useState('');
   const [qty, setQty] = useState('');
@@ -32,25 +31,18 @@ export default function PaperTrading() {
   const [balDraft, setBalDraft] = useState('');
 
   async function load() {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setLoading(false); return; }
-    setUserId(user.id);
-
-    // ensure a balance row exists (₱100k starting cash)
-    let { data: bal } = await supabase.from('paper_balances').select('balance').eq('user_id', user.id).maybeSingle();
-    if (!bal) {
-      await supabase.from('paper_balances').insert({ user_id: user.id, balance: START_BALANCE });
-      bal = { balance: START_BALANCE };
-    }
-    setBalance(Number(bal.balance));
-
-    const [{ data: tr }, quoteRes] = await Promise.all([
-      supabase.from('paper_trades').select('*').order('traded_at', { ascending: false }),
+    const [paperRes, quoteRes] = await Promise.all([
+      fetch('/api/paper'),
       fetch('/api/stocks').then((r) => r.json()).catch(() => []),
     ]);
     const map: Record<string, Quote> = {};
     if (Array.isArray(quoteRes)) for (const q of quoteRes) map[q.symbol] = q;
     setQuotes(map);
+
+    if (!paperRes.ok) { setLoading(false); return; }
+    setSignedIn(true);
+    const { balance: bal, trades: tr } = await paperRes.json();
+    setBalance(Number(bal));
     setTrades(tr ?? []);
     setLoading(false);
   }
@@ -72,22 +64,26 @@ export default function PaperTrading() {
     if (!sym || !n || n <= 0) { setError('Enter a ticker and a positive quantity.'); return; }
     const price = quotes[sym]?.price;
     if (!price) { setError(`No live price for ${sym}.`); return; }
-    if (!userId) { setError('You must be signed in.'); return; }
+    if (!signedIn) { setError('You must be signed in.'); return; }
 
     const value = n * price;
-    if (action === 'BUY' && value > balance) { setError(`Insufficient cash. Need ₱${value.toFixed(2)}, have ₱${balance.toFixed(2)}.`); return; }
     if (action === 'SELL') {
       const held = positions.find((p) => p.ticker === sym)?.qty ?? 0;
       if (n > held) { setError(`You only hold ${held} ${sym}.`); return; }
     }
 
     setBusy(true);
-    const newBalance = action === 'BUY' ? balance - value : balance + value;
-    const { error: tErr } = await supabase.from('paper_trades').insert({
-      user_id: userId, ticker: sym, company_name: quotes[sym]?.name ?? null, action, qty: n, price,
+    const res = await fetch('/api/paper/trade', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ticker: sym, companyName: quotes[sym]?.name ?? null, action, qty: n, price }),
     });
-    if (tErr) { setError(tErr.message); setBusy(false); return; }
-    await supabase.from('paper_balances').update({ balance: newBalance, updated_at: new Date().toISOString() }).eq('user_id', userId);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError(body.error ?? 'Could not place trade.');
+      setBusy(false);
+      return;
+    }
 
     setBusy(false); setQty(''); setTicker('');
     setNotice(`${action} ${n} ${sym} @ ₱${price.toFixed(2)} — total ₱${value.toFixed(2)}`);
@@ -95,11 +91,12 @@ export default function PaperTrading() {
   }
 
   async function setPaperBalance(next: number) {
-    if (!userId || isNaN(next) || next < 0) return;
-    await supabase.from('paper_balances').upsert(
-      { user_id: userId, balance: next, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id' }
-    );
+    if (isNaN(next) || next < 0) return;
+    await fetch('/api/paper/balance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ balance: next }),
+    });
     setBalance(next);
     setEditBal(false);
   }

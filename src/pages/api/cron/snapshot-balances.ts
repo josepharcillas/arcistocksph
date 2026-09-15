@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseAdmin } from '../../../lib/supabase-admin';
+import { query } from '../../../lib/db';
 import { computeStandings } from '../../../lib/leaderboard';
 
 // TASK-053: record each opted-in user's total portfolio value once per day so the
@@ -21,17 +21,19 @@ export const POST: APIRoute = async ({ request }) => {
   if (request.headers.get('authorization') !== `Bearer ${secret}`) return json({ error: 'Unauthorized' }, 401);
 
   try {
-    const admin = createSupabaseAdmin();
-    const standings = await computeStandings(admin);
+    const standings = await computeStandings();
     const today = new Date().toISOString().slice(0, 10);
 
     if (standings.length === 0) return json({ ok: true, snapshotted: 0 });
 
-    const { error } = await admin.from('balance_snapshots').upsert(
-      standings.map((s) => ({ user_id: s.userId, snapshot_date: today, total_value: s.total })),
-      { onConflict: 'user_id,snapshot_date' }
-    );
-    if (error) throw error;
+    for (const s of standings) {
+      await query(
+        `insert into balance_snapshots (user_id, snapshot_date, total_value)
+           values ($1, $2, $3)
+         on conflict (user_id, snapshot_date) do update set total_value = excluded.total_value`,
+        [s.userId, today, s.total]
+      );
+    }
 
     return json({ ok: true, date: today, snapshotted: standings.length });
   } catch (err) {

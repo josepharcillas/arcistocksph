@@ -1,8 +1,12 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseServerClient } from '../../../lib/supabase-server';
+import { clearSessionCookie } from '../../../lib/auth';
 
-export const GET: APIRoute = async ({ request, cookies, redirect }) => {
-  const supabase = createSupabaseServerClient(request, cookies);
-  await supabase.auth.signOut(); // clears the auth cookies via setAll
+export const prerender = false;
+
+/** Drop the session cookie. The session is stateless, so this is all sign-out is. */
+export const POST: APIRoute = async ({ cookies, redirect }) => {
+  clearSessionCookie(cookies);
   return redirect('/login');
 };
+
+export const GET = POST;

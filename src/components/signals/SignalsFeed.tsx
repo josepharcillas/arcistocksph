@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import SignalCard from './SignalCard';
 import { SkeletonCard } from '../ui/Skeleton';
 import type { StockAnalysisResult } from '../../lib/ai/types';
@@ -16,10 +15,12 @@ export default function SignalsFeed() {
 
   useEffect(() => {
     async function load() {
-      const { data: holdings } = await supabase.from('holdings').select('ticker, company_name');
+      const res = await fetch('/api/portfolio');
+      if (!res.ok) { setLoading(false); return; }
+      const { holdings } = await res.json();
       if (!holdings || holdings.length === 0) { setLoading(false); return; }
 
-      const unique = [...new Map(holdings.map(h => [h.ticker, h])).values()];
+      const unique = [...new Map(holdings.map((h: any) => [h.ticker, h])).values()] as { ticker: string; company_name: string | null }[];
 
       const results = await Promise.allSettled(
         unique.map(async h => {

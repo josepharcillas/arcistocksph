@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseAdmin } from '../../../lib/supabase-admin';
+import { query, queryOne } from '../../../lib/db';
 import { fetchAllQuotes } from '../../../lib/market';
 import { computeAdvice, headlineSignature, DEFAULT_ADVISOR_CONFIG, type AdvisorPosition } from '../../../lib/advisor';
 import { sendPushToUser, isPushConfigured } from '../../../lib/push/send';
@@ -26,34 +26,35 @@ export const POST: APIRoute = async ({ request }) => {
   if (!isPushConfigured()) return json({ error: 'Push not configured (VAPID keys missing)' }, 500);
 
   try {
-    const admin = createSupabaseAdmin();
-
     // Only users who can receive a push are worth computing.
-    const { data: subs } = await admin.from('push_subscriptions').select('user_id');
-    const userIds = [...new Set((subs ?? []).map((s: any) => s.user_id as string))];
+    const subs = await query<{ user_id: string }>(`select distinct user_id from push_subscriptions`);
+    const userIds = subs.map((s) => s.user_id);
     if (userIds.length === 0) return json({ ok: true, users: 0, alerted: 0 });
 
     const quotes = await fetchAllQuotes().catch(() => new Map<string, { price: number }>());
     let alerted = 0;
 
     for (const userId of userIds) {
-      const [{ data: holdings }, { data: cashRow }, { data: watch }, { data: stateRow }] = await Promise.all([
-        admin.from('holdings').select('ticker, qty, buy_price').eq('user_id', userId),
-        admin.from('portfolio_cash').select('cash').eq('user_id', userId).maybeSingle(),
-        admin.from('watchlist').select('ticker').eq('user_id', userId),
-        admin.from('advisor_alert_state').select('signature').eq('user_id', userId).maybeSingle(),
+      const [holdings, cashRow, watch, stateRow] = await Promise.all([
+        query<{ ticker: string; qty: number; buy_price: number }>(
+          `select ticker, qty, buy_price from holdings where user_id = $1`, [userId]
+        ),
+        queryOne<{ cash: number }>(`select cash from portfolio_cash where user_id = $1`, [userId]),
+        query<{ ticker: string }>(`select ticker from watchlist where user_id = $1`, [userId]),
+        queryOne<{ signature: string }>(`select signature from advisor_alert_state where user_id = $1`, [userId]),
       ]);
 
-      const hs = (holdings ?? []) as { ticker: string; qty: number; buy_price: number }[];
-      if (hs.length === 0) continue;
+      if (holdings.length === 0) continue;
 
-      const held = new Set(hs.map((h) => h.ticker));
-      const watchTickers = [...new Set(((watch ?? []) as { ticker: string }[]).map((w) => w.ticker))].filter((t) => !held.has(t));
+      const held = new Set(holdings.map((h) => h.ticker));
+      const watchTickers = [...new Set(watch.map((w) => w.ticker))].filter((t) => !held.has(t));
       const allTickers = [...held, ...watchTickers];
 
       // Signals from the shared cache (no AI calls in the cron).
-      const { data: sigs } = await admin.from('signal_cache').select('ticker, verdict, confidence, stop_loss').in('ticker', allTickers);
-      const sigMap = new Map((sigs ?? []).map((s: any) => [s.ticker, s]));
+      const sigs = allTickers.length
+        ? await query<any>(`select ticker, verdict, confidence, stop_loss from signal_cache where ticker = any($1::text[])`, [allTickers])
+        : [];
+      const sigMap = new Map(sigs.map((s: any) => [s.ticker, s]));
 
       const price = (t: string) => (quotes as Map<string, { price: number }>).get(t)?.price ?? 0;
       const mk = (ticker: string, shares: number, avgCost: number): AdvisorPosition => {
@@ -62,7 +63,7 @@ export const POST: APIRoute = async ({ request }) => {
       };
 
       const positions = [
-        ...hs.map((h) => mk(h.ticker, Number(h.qty), Number(h.buy_price))),
+        ...holdings.map((h) => mk(h.ticker, Number(h.qty), Number(h.buy_price))),
         ...watchTickers.map((t) => mk(t, 0, 0)).filter((p) => p.price > 0),
       ];
 
@@ -82,7 +83,11 @@ export const POST: APIRoute = async ({ request }) => {
       }
       // Track the current signature either way (so HOLD clears a prior alert).
       if (sig !== prev) {
-        await admin.from('advisor_alert_state').upsert({ user_id: userId, signature: sig, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+        await query(
+          `insert into advisor_alert_state (user_id, signature, updated_at) values ($1, $2, now())
+             on conflict (user_id) do update set signature = excluded.signature, updated_at = now()`,
+          [userId, sig]
+        );
       }
     }
 

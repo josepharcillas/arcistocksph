@@ -1,6 +1,7 @@
 ---
 import DashboardLayout from '../layouts/DashboardLayout.astro';
 import DipPressureTest from '../components/bounce/DipPressureTest.tsx';
+import DipSparkline from '../components/bounce/DipSparkline.tsx';
 import { getBounceBoard, type BounceRow } from '../lib/bounceBoard';
 
 let rows: BounceRow[] = [];
@@ -20,7 +21,9 @@ const verdictStyle = (v: string | null) =>
   v === 'BUY' ? 'text-green-400' : v === 'SELL' ? 'text-red-400' : 'text-slate-400';
 const peso = (n: number) => `₱${n.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-const grid = 'grid grid-cols-[minmax(0,1.5fr)_0.8fr_0.7fr_0.8fr_0.8fr_1rem] gap-2 items-center';
+// Column template shared by the header and desktop rows; `grid` display is
+// applied per-use (md+ only) so mobile stacks into cards instead of scrolling.
+const cols = 'grid-cols-[minmax(0,1.5fr)_0.8fr_0.7fr_0.8fr_0.8fr_1rem] gap-2 items-center';
 ---
 <DashboardLayout title="Dip Radar">
   <style>
@@ -57,8 +60,8 @@ const grid = 'grid grid-cols-[minmax(0,1.5fr)_0.8fr_0.7fr_0.8fr_0.8fr_1rem] gap-
 
     {rows.length > 0 && (
       <div class="overflow-x-auto">
-        <div class="min-w-[680px] rounded-xl border border-slate-800 overflow-hidden">
-          <div class={`${grid} bg-slate-900 text-slate-400 text-xs font-medium px-3 py-2.5`}>
+        <div class="md:min-w-[680px] rounded-xl border border-slate-800 overflow-hidden">
+          <div class={`hidden md:grid ${cols} bg-slate-900 text-slate-400 text-xs font-medium px-3 py-2.5`}>
             <span>Stock</span>
             <span class="text-right">Price</span>
             <span class="text-center">RSI</span>
@@ -69,7 +72,26 @@ const grid = 'grid grid-cols-[minmax(0,1.5fr)_0.8fr_0.7fr_0.8fr_0.8fr_1rem] gap-
 
           {rows.map((r) => (
             <details class="border-t border-slate-800/70">
-              <summary class={`${grid} px-3 py-2.5 text-sm hover:bg-slate-900/50`}>
+              <summary class="hover:bg-slate-900/50">
+                {/* Mobile card (stacks instead of side-scrolling the table) */}
+                <div class="md:hidden flex items-center justify-between gap-2 px-3 py-2.5 text-sm">
+                  <div class="min-w-0">
+                    <div class="flex items-center gap-2 flex-wrap">
+                      <span class="font-semibold text-white">{r.ticker}</span>
+                      <span class={`inline-block px-2 py-0.5 rounded-full text-[11px] font-medium whitespace-nowrap ${ratingStyle(r.rating)}`}>{ratingIcon(r.rating)} {r.rating}</span>
+                    </div>
+                    <span class="block text-xs text-slate-500 truncate">{r.companyName}</span>
+                    <div class="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] mt-1 tabular-nums">
+                      <span class="text-slate-300">{peso(r.price)}</span>
+                      {r.rsi14 != null && <span class="text-slate-400">RSI {r.rsi14.toFixed(0)}</span>}
+                      {r.pctFromLow != null && <span class="text-slate-400">{r.pctFromLow.toFixed(0)}% above low</span>}
+                      <span class={verdictStyle(r.verdict)}>AI {r.verdict ?? '—'}</span>
+                    </div>
+                  </div>
+                  <span class="chev text-slate-500">▸</span>
+                </div>
+                {/* Desktop table row */}
+                <div class={`hidden md:grid ${cols} px-3 py-2.5 text-sm`}>
                 <span class="min-w-0">
                   <span class="font-semibold text-white">{r.ticker}</span>
                   <span class="block text-xs text-slate-500 truncate">{r.companyName}</span>
@@ -84,10 +106,12 @@ const grid = 'grid grid-cols-[minmax(0,1.5fr)_0.8fr_0.7fr_0.8fr_0.8fr_1rem] gap-
                   </span>
                 </span>
                 <span class="chev text-slate-500 text-center">▸</span>
+                </div>
               </summary>
 
               <div class="px-3 pb-4 pt-1 bg-slate-900/30 text-sm">
-                <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400 mb-2">
+                <DipSparkline ticker={r.ticker} client:visible />
+                <div class="flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-400 mb-2 mt-2">
                   <span>Price <span class="text-slate-200 tabular-nums">{peso(r.price)}</span></span>
                   {r.rsi14 != null && <span>RSI <span class="text-slate-200 tabular-nums">{r.rsi14.toFixed(0)}</span></span>}
                   {r.pctFromLow != null && <span>Above low <span class="text-slate-200 tabular-nums">{r.pctFromLow.toFixed(0)}%</span></span>}

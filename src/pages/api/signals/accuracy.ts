@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { createSupabaseAdmin } from '../../../lib/supabase-admin';
+import { query } from '../../../lib/db';
 import { fetchAllQuotes } from '../../../lib/market';
 import { isSignalCorrect } from '../../../lib/signalAccuracy';
 
@@ -18,14 +18,12 @@ export const GET: APIRoute = async ({ url }) => {
   const cutoff = new Date(Date.now() - horizonDays * 86_400_000).toISOString();
 
   try {
-    const admin = createSupabaseAdmin();
-    const [{ data: history }, quotes] = await Promise.all([
-      admin
-        .from('signal_history')
-        .select('ticker, verdict, price, created_at')
-        .lte('created_at', cutoff)
-        .order('created_at', { ascending: false })
-        .limit(1000),
+    const [history, quotes] = await Promise.all([
+      query<any>(
+        `select ticker, verdict, price, created_at from signal_history
+           where created_at <= $1 order by created_at desc limit 1000`,
+        [cutoff]
+      ),
       fetchAllQuotes().catch(() => new Map()),
     ]);
 
@@ -38,7 +36,7 @@ export const GET: APIRoute = async ({ url }) => {
     let evaluated = 0;
     let correct = 0;
 
-    for (const s of history ?? []) {
+    for (const s of history) {
       const now = q.get(s.ticker)?.price;
       if (!now || !s.price) continue;
       const ret = (now - Number(s.price)) / Number(s.price);

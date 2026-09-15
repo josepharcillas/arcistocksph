@@ -1,7 +1,7 @@
 // Dividend tracker: rank PSE stocks by trailing-12-month cash-dividend yield
 // (from the scraped `dividends` table) and rate whether NOW looks like a good
 // entry (yield + RSI + AI verdict + trend + upcoming record date).
-import { createSupabaseAdmin } from './supabase-admin';
+import { query } from './db';
 import { fetchAllQuotes } from './market';
 import { ttmDividendPerShare, nextUpcomingDividend, entryRating, dedupeDividendEvents, type EntryResult, type DividendRow } from './dividendLogic';
 
@@ -50,22 +50,22 @@ const MIN_YIELD = Number(process.env.DIVIDEND_MIN_YIELD ?? 4); // % — entry th
 const STOCK_MIN_TURNOVER = Number(process.env.STOCK_MIN_TURNOVER ?? 5_000_000); // ₱/day liquidity floor
 
 export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
-  const admin = createSupabaseAdmin();
   const since = new Date(Date.now() - 400 * 86400_000).toISOString().slice(0, 10);
 
   // COMMON-share dividends only (a preferred payout per preferred share must not
   // be divided by the COMMON price). Rows with an unparsed security type are
   // rare and skipped rather than guessed.
-  const [{ data: divRows }, quotes] = await Promise.all([
-    admin.from('dividends')
-      .select('ticker, company_name, amount, div_type, security_type, record_date, payment_date, announced_at')
-      .eq('security_type', 'COMMON')
-      .gte('record_date', since),
+  const [divRows, quotes] = await Promise.all([
+    query<any>(
+      `select ticker, company_name, amount, div_type, security_type, record_date, payment_date, announced_at
+         from dividends where security_type = 'COMMON' and record_date >= $1`,
+      [since]
+    ),
     fetchAllQuotes(),
   ]);
 
   const byTicker = new Map<string, { name: string | null; rows: DividendRow[] }>();
-  for (const r of (divRows ?? []) as any[]) {
+  for (const r of divRows) {
     const t = r.ticker as string;
     const e = byTicker.get(t) ?? { name: r.company_name ?? null, rows: [] as DividendRow[] };
     e.rows.push({
@@ -79,10 +79,10 @@ export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
 
   // One query for all cached signals on dividend payers.
   const tickers = [...byTicker.keys()];
-  const { data: sigRows } = tickers.length
-    ? await admin.from('signal_cache').select('ticker, verdict, confidence, rsi14, above_sma200, turnover20d').in('ticker', tickers)
-    : { data: [] as any[] };
-  const signals = new Map((sigRows ?? []).map((s: any) => [s.ticker as string, s]));
+  const sigRows = tickers.length
+    ? await query<any>(`select ticker, verdict, confidence, rsi14, above_sma200, turnover20d from signal_cache where ticker = any($1::text[])`, [tickers])
+    : [];
+  const signals = new Map(sigRows.map((s: any) => [s.ticker as string, s]));
 
   const now = new Date();
   const rows: DividendYieldRow[] = [];
@@ -103,7 +103,7 @@ export async function getDividendBoard(limit = 50): Promise<DividendBoard> {
     const specialYieldPct = Math.max(0, yieldPct - regularYieldPct);
 
     const next = nextUpcomingDividend(e.rows, now);
-    const sig = signals.get(ticker);
+    const sig = signals.get(ticker) as any;
     const past = e.rows
       .filter((r) => r.recordDate && new Date(r.recordDate) <= now)
       .sort((a, b) => b.recordDate!.localeCompare(a.recordDate!));

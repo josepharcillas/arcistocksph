@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { supabase } from '../../lib/supabase';
 
 interface Props { onAdded: () => void; }
 
@@ -17,33 +16,30 @@ export default function AddHoldingForm({ onAdded }: Props) {
     if (!ticker || !qty || !buyPrice) { setError('All fields are required.'); return; }
 
     setSaving(true);
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) { setError('You must be signed in to add a holding.'); setSaving(false); return; }
-
     const sym = ticker.toUpperCase().replace('.PS', '');
-    const addQty = parseFloat(qty);
-    const addPrice = parseFloat(buyPrice);
 
-    // If this ticker is already held, average into one consolidated position
-    // (weighted average cost) rather than creating a duplicate row.
-    const { data: existing } = await supabase.from('holdings').select('id, qty, buy_price').eq('user_id', user.id).eq('ticker', sym);
-
-    let err;
-    if (existing && existing.length > 0) {
-      let totQty = addQty;
-      let totCost = addQty * addPrice;
-      for (const e of existing) { totQty += Number(e.qty); totCost += Number(e.qty) * Number(e.buy_price); }
-      const [first, ...rest] = existing;
-      ({ error: err } = await supabase.from('holdings').update({ qty: totQty, buy_price: totCost / totQty, buy_date: buyDate }).eq('id', first.id));
-      if (!err && rest.length) await supabase.from('holdings').delete().in('id', rest.map((r) => r.id));
-    } else {
-      ({ error: err } = await supabase.from('holdings').insert({
-        user_id: user.id, ticker: sym, qty: addQty, buy_price: addPrice, buy_date: buyDate,
-      }));
+    // Averaging into an existing position now happens server-side, in one
+    // transaction — see addHolding() in src/lib/repo.ts. Doing it here took
+    // three round trips and could duplicate a row if two submits raced.
+    let res: Response;
+    try {
+      res = await fetch('/api/portfolio/holdings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ticker: sym, qty: parseFloat(qty), buyPrice: parseFloat(buyPrice), buyDate }),
+      });
+    } catch {
+      setSaving(false);
+      setError('Could not reach the server. Please try again.');
+      return;
     }
 
     setSaving(false);
-    if (err) { setError(err.message); return; }
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      setError(body.error ?? 'Could not save that holding.');
+      return;
+    }
     onAdded();
   }
 

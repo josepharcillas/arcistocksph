@@ -1,5 +1,5 @@
 import webpush from 'web-push';
-import { createSupabaseAdmin } from '../supabase-admin';
+import { query } from '../db';
 
 // SERVER-ONLY. Sends Web Push notifications via VAPID. Never import into client code.
 
@@ -42,45 +42,41 @@ interface SubRow {
 // Sends to every subscription for one user. Dead endpoints (404/410) are pruned.
 export async function sendPushToUser(userId: string, payload: PushPayload): Promise<number> {
   configureVapid();
-  const admin = createSupabaseAdmin();
-  const { data: subs } = await admin
-    .from('push_subscriptions')
-    .select('id, endpoint, p256dh, auth')
-    .eq('user_id', userId);
-
-  return sendToSubscriptions(admin, (subs ?? []) as SubRow[], payload);
+  const subs = await query<SubRow>(
+    `select id, endpoint, p256dh, auth from push_subscriptions where user_id = $1`,
+    [userId]
+  );
+  return sendToSubscriptions(subs, payload);
 }
 
-// TASK-043: notify everyone holding `ticker` (who hasn't opted out for it) about a signal.
+// TASK-043: notify everyone holding `ticker` (who hasn't opted out) about a signal.
 export async function notifyHoldersOfSignal(
   ticker: string,
   verdict: string,
   rationale: string
 ): Promise<number> {
   configureVapid();
-  const admin = createSupabaseAdmin();
 
-  const { data: holdings } = await admin
-    .from('holdings')
-    .select('user_id')
-    .eq('ticker', ticker);
-  const userIds = [...new Set((holdings ?? []).map((h: any) => h.user_id))];
+  const holders = await query<{ user_id: string }>(
+    `select distinct user_id from holdings where ticker = $1`,
+    [ticker]
+  );
+  const userIds = holders.map((h) => h.user_id);
   if (userIds.length === 0) return 0;
 
   // Respect per-stock opt-out (push_preferences.enabled = false). Absence = opted in.
-  const { data: prefs } = await admin
-    .from('push_preferences')
-    .select('user_id, enabled')
-    .eq('ticker', ticker)
-    .in('user_id', userIds);
-  const optedOut = new Set((prefs ?? []).filter((p: any) => p.enabled === false).map((p: any) => p.user_id));
+  const prefs = await query<{ user_id: string; enabled: boolean }>(
+    `select user_id, enabled from push_preferences where ticker = $1 and user_id = any($2::text[])`,
+    [ticker, userIds]
+  );
+  const optedOut = new Set(prefs.filter((p) => p.enabled === false).map((p) => p.user_id));
   const recipients = userIds.filter((id) => !optedOut.has(id));
   if (recipients.length === 0) return 0;
 
-  const { data: subs } = await admin
-    .from('push_subscriptions')
-    .select('id, endpoint, p256dh, auth')
-    .in('user_id', recipients);
+  const subs = await query<SubRow>(
+    `select id, endpoint, p256dh, auth from push_subscriptions where user_id = any($1::text[])`,
+    [recipients]
+  );
 
   const payload: PushPayload = {
     title: `${verdict} signal: ${ticker}`,
@@ -88,14 +84,10 @@ export async function notifyHoldersOfSignal(
     url: `/stock/${ticker}`,
     ticker,
   };
-  return sendToSubscriptions(admin, (subs ?? []) as SubRow[], payload);
+  return sendToSubscriptions(subs, payload);
 }
 
-async function sendToSubscriptions(
-  admin: ReturnType<typeof createSupabaseAdmin>,
-  subs: SubRow[],
-  payload: PushPayload
-): Promise<number> {
+async function sendToSubscriptions(subs: SubRow[], payload: PushPayload): Promise<number> {
   const body = JSON.stringify(payload);
   let sent = 0;
   const dead: string[] = [];
@@ -115,6 +107,6 @@ async function sendToSubscriptions(
     })
   );
 
-  if (dead.length) await admin.from('push_subscriptions').delete().in('id', dead);
+  if (dead.length) await query(`delete from push_subscriptions where id = any($1::uuid[])`, [dead]);
   return sent;
 }

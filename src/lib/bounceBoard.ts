@@ -2,7 +2,7 @@
 // rated SETUP / WAIT / AVOID by bounceLogic. The scanner reads signal_cache (like
 // the dividend board) so it never re-fetches history for the whole universe; the
 // pressure-test path fetches one ticker live so it works for anything the user types.
-import { createSupabaseAdmin } from './supabase-admin';
+import { query } from './db';
 import { fetchAllQuotes, getStockData } from './market';
 import { bounceRating, pctFromLow, type BounceRating } from './bounceLogic';
 import { getOrComputeSignal } from './signals';
@@ -38,14 +38,13 @@ const RANK: Record<BounceRating, number> = { SETUP: 0, WAIT: 1, AVOID: 2 };
 
 /** Scan the cached, liquid universe for washed-out dip candidates. */
 export async function getBounceBoard(limit = 40): Promise<BounceBoard> {
-  const admin = createSupabaseAdmin();
-  const [{ data: sigRows }, quotes] = await Promise.all([
-    admin.from('signal_cache').select('ticker, verdict, confidence, rsi14, above_sma200, turnover20d, pct_from_low, macd_hist'),
+  const [sigRows, quotes] = await Promise.all([
+    query<any>(`select ticker, verdict, confidence, rsi14, above_sma200, turnover20d, pct_from_low, macd_hist from signal_cache`),
     fetchAllQuotes(),
   ]);
 
   const rows: BounceRow[] = [];
-  for (const s of (sigRows ?? []) as any[]) {
+  for (const s of sigRows) {
     const turnover20d = s.turnover20d != null ? Number(s.turnover20d) : null;
     if (turnover20d == null || turnover20d < MIN_TURNOVER) continue; // thin names give fictional fills
 

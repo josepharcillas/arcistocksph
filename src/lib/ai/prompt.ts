@@ -56,8 +56,8 @@ TECHNICALS:
 - 1-day change: ${t.priceChange1d >= 0 ? '+' : ''}${t.priceChange1d.toFixed(2)}%
 - 1-week change: ${t.priceChange1w >= 0 ? '+' : ''}${t.priceChange1w.toFixed(2)}%
 ${fundamentalsBlock}
-RECENT NEWS:
-${headlines.length > 0 ? headlines.slice(0, 5).map((h, i) => `${i + 1}. ${h}`).join('\n') : 'No recent news found.'}
+RECENT NEWS & MARKET COVERAGE:
+${headlines.length > 0 ? headlines.slice(0, 8).map((h, i) => `${i + 1}. ${h}`).join('\n') : 'No recent news found.'}
 
 Respond ONLY in this exact JSON format:
 {

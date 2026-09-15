@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from 'react';
-import { supabase } from '../../lib/supabase';
 
 // Import real holdings from a COL Financial portfolio screenshot.
 // Flow: pick image -> server vision parse -> reviewable diff vs current holdings
@@ -127,51 +126,23 @@ export default function ImportScreenshot({ userId, currentHoldings, onImported, 
     setStatus('saving');
     setError('');
     try {
-      // Re-read existing rows fresh so we sync against current DB state.
-      const { data: existing, error: readErr } = await supabase
-        .from('holdings').select('id, ticker, qty, buy_price, buy_date').eq('user_id', userId);
-      if (readErr) throw readErr;
-
-      const rowsByTicker = new Map<string, { id: string; buy_date: string | null }[]>();
-      for (const h of existing ?? []) {
-        const arr = rowsByTicker.get(h.ticker) ?? [];
-        arr.push({ id: h.id, buy_date: h.buy_date });
-        rowsByTicker.set(h.ticker, arr);
+      // The whole replace-to-match sync is one server transaction now
+      // (syncHoldings in src/lib/repo.ts). It used to be a loop of individual
+      // writes from the browser, which could leave the portfolio half-synced
+      // if the tab was closed partway through.
+      const res = await fetch('/api/portfolio/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          positions: clean.map(p => ({ ticker: p.ticker, qty: p.shares, buyPrice: p.avgPrice })),
+          keep: [...keepTickers],
+          cash: includeCash && parsedCash !== null ? parsedCash : null,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? 'Sync failed. Please try again.');
       }
-
-      // Upsert each target position, consolidated to a single row per ticker.
-      for (const pos of clean) {
-        const existingRows = rowsByTicker.get(pos.ticker) ?? [];
-        const buyDate = existingRows[0]?.buy_date ?? today(); // preserve original entry date
-        if (existingRows.length > 0) {
-          const [first, ...rest] = existingRows;
-          const { error: upErr } = await supabase.from('holdings')
-            .update({ qty: pos.shares, buy_price: pos.avgPrice, buy_date: buyDate }).eq('id', first.id);
-          if (upErr) throw upErr;
-          if (rest.length) await supabase.from('holdings').delete().in('id', rest.map(r => r.id));
-        } else {
-          const { error: insErr } = await supabase.from('holdings')
-            .insert({ user_id: userId, ticker: pos.ticker, qty: pos.shares, buy_price: pos.avgPrice, buy_date: today() });
-          if (insErr) throw insErr;
-        }
-      }
-
-      // Remove positions no longer in the screenshot, unless the user kept them.
-      const targetSet = new Set(clean.map(p => p.ticker));
-      const toDelete = (existing ?? []).filter(h => !targetSet.has(h.ticker) && !keepTickers.has(h.ticker));
-      if (toDelete.length) {
-        const { error: delErr } = await supabase.from('holdings').delete().in('id', toDelete.map(h => h.id));
-        if (delErr) throw delErr;
-      }
-
-      // Sync cash if the screenshot showed it and the user left it checked.
-      if (includeCash && parsedCash !== null) {
-        await supabase.from('portfolio_cash').upsert(
-          { user_id: userId, cash: parsedCash, updated_at: new Date().toISOString() },
-          { onConflict: 'user_id' }
-        );
-      }
-
       onImported();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Sync failed. Please try again.');

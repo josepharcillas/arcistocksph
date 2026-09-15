@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { supabase } from '../../lib/supabase';
 import { SkeletonCard } from '../ui/Skeleton';
 import { actionStyle, actionColor, actionLabel } from '../advisor/actionStyles';
 
@@ -29,16 +28,15 @@ export default function PortfolioInsights() {
     setLoading(true);
     setError('');
     try {
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) { setError('Sign in to see your portfolio analysis.'); setLoading(false); return; }
+      const portfolioRes = await fetch('/api/portfolio');
+      if (portfolioRes.status === 401) {
+        setError('Sign in to see your portfolio analysis.'); setLoading(false); return;
+      }
+      if (!portfolioRes.ok) throw new Error('Could not load your portfolio.');
+      const portfolio = await portfolioRes.json();
 
-      const [{ data: holdings }, { data: cashRow }] = await Promise.all([
-        supabase.from('holdings').select('ticker, qty, buy_price'),
-        supabase.from('portfolio_cash').select('cash').eq('user_id', user.id).maybeSingle(),
-      ]);
-
-      const hs = (holdings ?? []) as { ticker: string; qty: number; buy_price: number }[];
-      const cash = cashRow ? Number(cashRow.cash) : 0;
+      const hs = (portfolio.holdings ?? []) as { ticker: string; qty: number; buy_price: number }[];
+      const cash = Number(portfolio.cash) || 0;
       if (hs.length === 0) { setEmpty(true); setLoading(false); return; }
 
       const res = await fetch('/api/portfolio/insights', {

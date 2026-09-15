@@ -40,8 +40,8 @@ try {
   await page.waitForURL('**/dashboard', { timeout: 8000 });
   outcome = `NAVIGATED to ${page.url()}`;
 } catch {
-  const errVisible = await page.isVisible('#email-error');
-  const errText = errVisible ? (await page.textContent('#email-error'))?.trim() : null;
+  const errVisible = await page.isVisible('#login-error');
+  const errText = errVisible ? (await page.textContent('#login-error'))?.trim() : null;
   const btnTextAfter = (await page.textContent('#email-submit'))?.trim();
   if (errText) outcome = `ERROR SHOWN: "${errText}"`;
   else outcome = `NO NAV. button now: "${btnTextAfter}", url still ${page.url()}`;
